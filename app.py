@@ -21,6 +21,7 @@ from paperflux.src.services.database import DatabaseService
 from paperflux.src.services.paper_processor import PaperProcessor
 from paperflux.src.services.scheduler import PaperScheduler
 from paperflux.src.config.settings import TEMP_DIR
+from paperflux.src.ui.mermaid import render_diagram, render_mermaid
 
 os.makedirs(TEMP_DIR, exist_ok=True)
 
@@ -89,8 +90,8 @@ st.markdown("### AI Research Paper Insights")
 st.sidebar.header("About PaperFlux")
 st.sidebar.markdown(
     """
-    PaperFlux extracts and analyzes top AI research papers from Hugging Face's 
-    daily curated list. Each paper is summarized and explained in depth.
+    PaperFlux fetches Hugging Face Daily Papers, then runs two Gemini agents:
+    one for in-depth technical explanation and one for 2–3 insights with diagrams.
     
     Papers are updated automatically once daily at 8:00 AM UTC on weekdays.
     """
@@ -199,13 +200,36 @@ with tab1:
                 pdf_link = get_pdf_download_link(paper_id, title)
                 st.markdown(pdf_link, unsafe_allow_html=True)
                 
-                # Paper content in tabs
-                paper_tab1, paper_tab2 = st.tabs(["Summary", "Detailed Analysis"])
-                
+                paper_tab1, paper_tab2, paper_tab3 = st.tabs(
+                    ["Summary", "Insights & Diagrams", "Detailed Analysis"]
+                )
+
                 with paper_tab1:
                     st.markdown(paper["summary"])
-                
+
                 with paper_tab2:
+                    insights_doc = paper.get("insights") or {}
+                    insight_items = insights_doc.get("insights") or []
+                    if insight_items:
+                        for idx, insight in enumerate(insight_items, start=1):
+                            st.markdown(f"### {idx}. {insight.get('title', 'Insight')}")
+                            if insight.get("summary"):
+                                st.markdown(insight["summary"])
+                            diagram = insight.get("diagram") or {}
+                            render_diagram(
+                                diagram.get("type", "mermaid"),
+                                diagram.get("code", ""),
+                            )
+                            st.divider()
+                    elif insights_doc.get("raw"):
+                        st.warning("Insights JSON could not be parsed; showing raw model output.")
+                        st.markdown(insights_doc["raw"])
+                    elif insights_doc.get("parse_error"):
+                        st.warning(f"Insights agent error: {insights_doc['parse_error']}")
+                    else:
+                        st.warning("Insights are not available for this paper.")
+
+                with paper_tab3:
                     if paper.get("explanation"):
                         st.markdown(paper["explanation"])
                     else:
@@ -221,24 +245,25 @@ with tab2:
     
     1. **Data Collection**: We automatically fetch the daily curated papers from Hugging Face's API.
     2. **Automatic Processing**: Papers are processed every weekday at 8:00 AM UTC.
-    3. **Document Analysis**: Each paper is downloaded and analyzed using Google's Gemini Pro AI.
-    4. **API Load Balancing**: We automatically rotate between multiple API keys to prevent rate limiting issues.
-    5. **Data Storage**: All information is cached in a MongoDB database for fast access.
+    3. **Analyst agent**: Gemini Flash reads the PDF and writes a deep technical explanation (`SKILL.md`).
+    4. **Insights agent**: A second Gemini Flash key turns that writeup plus the PDF into 2–3 insights and visual diagrams (SVG/Mermaid).
+    5. **Data Storage**: Results are stored in MongoDB for fast access.
     
     ### Features
     
     - **Daily Updates**: New papers are processed once per day automatically.
     - **In-depth Analysis**: Get detailed explanations of complex research.
+    - **Insights & Diagrams**: Method/pipeline diagrams generated per paper.
     - **Original Access**: Download the original PDF of any paper.
     
     ### Technologies Used
     
     - Streamlit for the web interface
     - MongoDB for data storage
-    - Google's Gemini Pro AI for paper analysis
+    - Google Gemini (separate keys for analyst and insights agents)
     - Hugging Face API for paper collection
     """)
 
 # Footer
 st.markdown("---")
-st.markdown("PaperFlux © 2025 | Built with Streamlit and Gemini Pro")
+st.markdown("PaperFlux | Built with Streamlit and Gemini")

@@ -11,16 +11,15 @@ pinned: true
 
 # PaperFlux: AI Research Paper Insights
 
-PaperFlux is a Streamlit based web application powered by Gemini that automatically fetches, analyzes, and explains the latest AI research papers from Hugging Face's daily curated list. Using Google's Gemini Pro AI, it provides in-depth explanations and technical breakdowns of complex research papers, making cutting-edge AI research more accessible.
+PaperFlux is a Streamlit app that fetches Hugging Face Daily Papers, then runs two Gemini agents: one that explains the PDF in depth, and one that produces 2–3 insights with diagrams.
 
 ## Features
 
 - **Daily Updates**: Automatically fetches and processes new papers every weekday at ```8:00 AM UTC```
-- **AI-Powered Analysis**: Uses Google's ```Gemini Pro``` to provide detailed explanations of complex research
-- **Paper Library**: Browse through all processed papers with easy navigation
-- **Technical Breakdowns**: Get in-depth explanations of mathematical concepts and methodologies
-- **Critical Assessment**: Read AI-generated critical analysis of each paper
-- **Responsive Interface**: User-friendly interface built with Streamlit
+- **Analyst agent**: Gemini Flash reads the native PDF and writes a technical breakdown
+- **Insights agent**: A second Gemini key (separate quota) turns the paper + writeup into 2–3 visual diagrams (SVG or Mermaid)
+- **Paper Library**: Browse processed papers in Streamlit
+- **Original PDFs**: Direct arXiv download links
 
 ## System Architecture
 
@@ -31,8 +30,9 @@ PaperFlux follows a robust architecture for fetching, processing, and displaying
       A[Scheduler] -->|Daily trigger| B[Paper Processor]
       B -->|Fetch papers| C[Hugging Face API]
       B -->|Download PDFs| D[arXiv]
-      B -->|Analyze content| E[Gemini Pro API]
-      B -->|Store data| F[(MongoDB)]
+      B -->|Analyze PDF| E[Analyst agent — Gemini Flash]
+      E -->|Explanation + PDF| I[Insights agent — Gemini Flash]
+      I -->|Store data| F[(MongoDB)]
       G[Streamlit UI] -->|Display papers| F
       H[User] -->|View papers| G
 
@@ -43,9 +43,10 @@ PaperFlux follows a robust architecture for fetching, processing, and displaying
 1. **Scheduled Polling**: Every weekday at 8:00 AM UTC, the scheduler checks if papers need to be processed
 2. **Data Collection**: The application fetches the latest papers from Hugging Face's API
 3. **PDF Processing**: Papers are downloaded from arXiv and stored temporarily
-4. **AI Analysis**: Each paper is analyzed using Google's Gemini Pro API
-5. **Data Storage**: Results are stored in MongoDB for quick access
-6. **User Interface**: Users can browse all processed papers through the Streamlit interface
+4. **Analyst agent**: Each PDF is explained in depth using Gemini (native PDF input)
+5. **Insights agent**: A second agent (separate API key) produces 2–3 insights and diagrams
+6. **Data Storage**: Results are stored in MongoDB for quick access
+7. **User Interface**: Users browse papers, insights, and full writeups in Streamlit
 
 ## Installation
 
@@ -53,7 +54,7 @@ PaperFlux follows a robust architecture for fetching, processing, and displaying
 
 - Python 3.8 or higher
 - MongoDB database
-- Google Gemini Pro API key(s)
+- Google Gemini API keys (one for the analyst agent, one for the insights agent)
 - Poetry (dependency management)
 
 ### Local Setup with Poetry
@@ -82,9 +83,10 @@ PaperFlux follows a robust architecture for fetching, processing, and displaying
 4. Configure your environment variables:
    ```
    MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/paperflux
-   GEMINI_API_KEY1=your_gemini_api_key_1
-   GEMINI_API_KEY2=your_gemini_api_key_2
-   # Add more API keys as needed for load balancing
+   GEMINI_ANALYST_API_KEY=your_analyst_gemini_key
+   GEMINI_INSIGHTS_API_KEY=your_insights_gemini_key
+   GEMINI_ANALYST_MODEL=gemini-3.5-flash
+   GEMINI_INSIGHTS_MODEL=gemini-3.5-flash
    ```
 
 5. Run the Streamlit app with Poetry:

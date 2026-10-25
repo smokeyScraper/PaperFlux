@@ -39,63 +39,30 @@ class InsightsParserTest(unittest.TestCase):
         self.assertIn("parse_error", parsed)
 
     def test_caps_at_three_insights(self):
-        raw = '{"insights": [{"title": "a", "summary": "s", "diagram": {"code": "x"}}] * 4}'
-        # invalid python-in-json; build properly
-        raw = json_insights(4)
-        parsed = parse_insights_payload(raw)
+        parsed = parse_insights_payload(json_insights(4))
         self.assertEqual(len(parsed["insights"]), 3)
 
-    def test_parses_svg_diagram(self):
-        raw = """```json
-{
-  "insights": [
-    {
-      "title": "Sparse Attention Routing",
-      "summary": "Routing tokens reduces quadratic complexity to linear.",
-      "diagram": {
-        "type": "svg",
-        "code": "<svg viewBox=\\"0 0 400 100\\" xmlns=\\"http://www.w3.org/2000/svg\\"><rect width=\\"400\\" height=\\"100\\" fill=\\"#0f172a\\"/></svg>"
-      }
-    }
-  ]
-}
-```"""
-        parsed = parse_insights_payload(raw)
-        self.assertEqual(len(parsed["insights"]), 1)
-        self.assertEqual(parsed["insights"][0]["diagram"]["type"], "svg")
-        self.assertIn("<svg", parsed["insights"][0]["diagram"]["code"])
+    def test_parses_markdown_svg_sections(self):
+        raw = """## Residual routing
+Skip connections keep gradients alive.
 
-    def test_autodetects_svg_type_when_unspecified(self):
-        raw = """{
-  "insights": [
-    {
-      "title": "Cross-Attention Gate",
-      "summary": "Gating mechanism.",
-      "diagram": {
-        "code": "<svg viewBox=\\"0 0 200 100\\"><circle cx=\\"50\\" cy=\\"50\\" r=\\"40\\"/></svg>"
-      }
-    }
-  ]
-}"""
-        parsed = parse_insights_payload(raw)
-        self.assertEqual(parsed["insights"][0]["diagram"]["type"], "svg")
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40"><rect width="100" height="40"/></svg>
+```
 
-    def test_strips_code_fences_in_diagram_code(self):
-        raw = """{
-  "insights": [
-    {
-      "title": "Pipeline",
-      "summary": "Stages.",
-      "diagram": {
-        "type": "svg",
-        "code": "```xml\\n<svg><rect/></svg>\\n```"
-      }
-    }
-  ]
-}"""
-        parsed = parse_insights_payload(raw)
-        self.assertEqual(parsed["insights"][0]["diagram"]["code"], "<svg><rect/></svg>")
+## Token mixing
+Attention mixes sequence positions.
 
+```vega-lite
+{"mark": "bar", "data": {"values": [{"x": "A", "y": 1}]}}
+```
+"""
+        parsed = parse_insights_payload(raw)
+        self.assertEqual(len(parsed["insights"]), 2)
+        self.assertEqual(parsed["insights"][0]["visual"]["type"], "svg")
+        self.assertIn("<svg", parsed["insights"][0]["visual"]["code"])
+        self.assertEqual(parsed["insights"][1]["visual"]["type"], "vega-lite")
+        self.assertEqual(parsed["insights"][1]["visual"]["spec"]["mark"], "bar")
 
 
 def json_insights(n: int) -> str:

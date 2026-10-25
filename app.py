@@ -21,7 +21,7 @@ from paperflux.src.services.database import DatabaseService
 from paperflux.src.services.paper_processor import PaperProcessor
 from paperflux.src.services.scheduler import PaperScheduler
 from paperflux.src.config.settings import TEMP_DIR
-from paperflux.src.ui.mermaid import render_diagram, render_mermaid
+from paperflux.src.ui.visuals import render_insight_visual
 
 os.makedirs(TEMP_DIR, exist_ok=True)
 
@@ -215,14 +215,11 @@ with tab1:
                             st.markdown(f"### {idx}. {insight.get('title', 'Insight')}")
                             if insight.get("summary"):
                                 st.markdown(insight["summary"])
-                            diagram = insight.get("diagram") or {}
-                            render_diagram(
-                                diagram.get("type", "mermaid"),
-                                diagram.get("code", ""),
-                            )
+                            visual = insight.get("visual") or insight.get("diagram") or {}
+                            render_insight_visual(visual)
                             st.divider()
                     elif insights_doc.get("raw"):
-                        st.warning("Insights JSON could not be parsed; showing raw model output.")
+                        st.warning("Insights could not be parsed; showing raw model output.")
                         st.markdown(insights_doc["raw"])
                     elif insights_doc.get("parse_error"):
                         st.warning(f"Insights agent error: {insights_doc['parse_error']}")
@@ -246,7 +243,7 @@ with tab2:
     1. **Data Collection**: We automatically fetch the daily curated papers from Hugging Face's API.
     2. **Automatic Processing**: Papers are processed every weekday at 8:00 AM UTC.
     3. **Analyst agent**: Gemini Flash reads the PDF and writes a deep technical explanation (`SKILL.md`).
-    4. **Insights agent**: A second Gemini Flash key turns that writeup plus the PDF into 2–3 insights and visual diagrams (SVG/Mermaid).
+    4. **Insights agent**: A second Gemini Flash key turns that writeup plus the PDF into 2–3 insights and Mermaid diagrams.
     5. **Data Storage**: Results are stored in MongoDB for fast access.
     
     ### Features

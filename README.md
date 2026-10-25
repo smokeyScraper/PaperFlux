@@ -17,7 +17,7 @@ PaperFlux is a Streamlit app that fetches Hugging Face Daily Papers, then runs t
 
 - **Daily Updates**: Automatically fetches and processes new papers every weekday at ```8:00 AM UTC```
 - **Analyst agent**: Gemini Flash reads the native PDF and writes a technical breakdown
-- **Insights agent**: A second Gemini key (separate quota) turns the paper + writeup into 2–3 visual diagrams (SVG or Mermaid)
+- **Insights agent**: A second Gemini key (separate quota) turns the paper + writeup into 2–3 Mermaid diagrams
 - **Paper Library**: Browse processed papers in Streamlit
 - **Original PDFs**: Direct arXiv download links
 

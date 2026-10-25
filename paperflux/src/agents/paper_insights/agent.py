@@ -14,7 +14,7 @@ SKILL_PATH = AGENTS_DIR / "paper_insights" / "SKILL.md"
 
 
 class PaperInsightsAgent:
-    """Turns a paper + analyst writeup into 2-3 insights with visual diagrams (SVG/Mermaid)."""
+    """Turns a paper + analyst writeup into 2-3 insights with SVG / charts / Mermaid."""
 
     def __init__(
         self,
@@ -37,7 +37,8 @@ class PaperInsightsAgent:
     ) -> dict[str, Any]:
         user_text = (
             "Using the attached research paper PDF and the analyst writeup below, "
-            "produce exactly 2 or 3 insights with diagrams as specified in your skill.\n\n"
+            "produce exactly 2 or 3 insights. Prefer SVG figures; use Vega-Lite when "
+            "the paper has real numeric comparisons; use Mermaid only for simple control flow.\n\n"
             f"Paper ID: {paper_id or 'unknown'}\n"
             f"Title: {title or 'See PDF'}\n\n"
             "--- Analyst writeup ---\n"

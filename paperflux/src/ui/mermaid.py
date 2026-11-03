@@ -32,4 +32,4 @@ def render_mermaid(code: str, height: int = 420) -> None:
       }}
     </script>
     """
-    st.components.v1.html(component, height=min_height, scrolling=True)
+    st.iframe(component.strip(), height=min_height, width="stretch")

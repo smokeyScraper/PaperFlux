@@ -43,7 +43,7 @@ def _render_vega_lite(visual: dict[str, Any]) -> None:
         st.caption("Chart spec was missing or invalid.")
         return
     try:
-        st.vega_lite_chart(spec, use_container_width=True)
+        st.vega_lite_chart(spec, width="stretch")
     except Exception as exc:
         st.warning(f"Could not render Vega-Lite chart: {exc}")
         st.code(json.dumps(spec, indent=2)[:4000], language="json")
@@ -55,10 +55,10 @@ def _render_svg(raw_svg: str) -> None:
         st.caption("SVG visual was empty after sanitizing.")
         return
     height = _svg_height(svg)
-    st.components.v1.html(
+    st.iframe(
         f'<div style="width:100%;overflow:auto">{svg}</div>',
         height=height,
-        scrolling=True,
+        width="stretch",
     )
 
 

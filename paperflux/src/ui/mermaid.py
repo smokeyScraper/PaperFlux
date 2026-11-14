@@ -20,7 +20,7 @@ def render_mermaid(code: str, height: int = 420) -> None:
     </div>
     <script type="module">
       import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-      mermaid.initialize({{ startOnLoad: false, theme: 'neutral', securityLevel: 'loose' }});
+      mermaid.initialize({{ startOnLoad: false, theme: 'neutral', securityLevel: 'strict' }});
       const src = document.getElementById('src-{diagram_id}').textContent;
       const target = document.getElementById('{diagram_id}');
       try {{

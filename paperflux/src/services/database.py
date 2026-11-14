@@ -1,5 +1,5 @@
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from pymongo import MongoClient
 from paperflux.src.models.models import Paper, ProcessingMetadata
 import threading
@@ -11,6 +11,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 logger = logging.getLogger("paperflux.database")
+
+def paper_is_complete(doc) -> bool:
+    """A stored paper needs no more model calls when it has an analysis and a usable v3 pack."""
+    if not doc or not doc.get("explanation"):
+        return False
+    insights = doc.get("insights") or {}
+    return insights.get("schema_version") == 3 and bool(insights.get("insights"))
+
 
 class DatabaseService:
     _instance = None
@@ -54,6 +62,30 @@ class DatabaseService:
             self._cache_timestamp = 0
         return result
 
+    def _invalidate_cache(self):
+        with self._cache_lock:
+            self._cache = {}
+            self._cache_timestamp = 0
+
+    def upsert_paper(self, paper: Paper):
+        """Insert or replace one paper by id (never wipes the other papers)."""
+        logger.info(f"Upserting paper: {paper.paper_id}")
+        doc = paper.to_dict()
+        result = self.collection.replace_one({"paper_id": paper.paper_id}, doc, upsert=True)
+        self._invalidate_cache()
+        return result
+
+    def delete_papers_not_in(self, keep_ids):
+        """Remove papers that are not part of the current batch."""
+        result = self.collection.delete_many({"paper_id": {"$nin": list(keep_ids)}})
+        self._invalidate_cache()
+        return result.deleted_count
+
+    def has_complete_paper(self, paper_id: str) -> bool:
+        """True if the paper is already stored with an analysis AND a v3 insights pack."""
+        doc = self.collection.find_one({"paper_id": paper_id})
+        return paper_is_complete(doc)
+
     def get_all_papers(self, max_cache_age_seconds=20):
         """Get all papers, with caching for better performance"""
         current_time = time.time()
@@ -94,7 +126,7 @@ class DatabaseService:
 
     def update_last_processed_date(self):
         """Update the last processed date to now"""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         logger.info(f"Updating last processed date to {now}")
         
         # Update or insert the processing metadata
@@ -122,7 +154,7 @@ class DatabaseService:
             return ProcessingMetadata()
         
         metadata = ProcessingMetadata()
-        metadata.last_processed_date = data.get("last_processed_date", datetime.utcnow())
+        metadata.last_processed_date = data.get("last_processed_date", datetime.now(timezone.utc))
         metadata.is_processing = data.get("is_processing", False)
         
         return metadata
@@ -138,7 +170,7 @@ class DatabaseService:
             
         # Get the date (not time) of the last processing
         last_date = metadata.last_processed_date.date()
-        today = datetime.utcnow().date()
+        today = datetime.now(timezone.utc).date()
         
         # If we haven't processed today, or if we have no papers, we should process
         papers_count = self.get_papers_count()

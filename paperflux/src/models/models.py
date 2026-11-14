@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 
@@ -13,6 +13,10 @@ class Paper:
         explanation: Optional[str] = None,
         insights: Optional[Dict[str, Any]] = None,
         pdf_url: Optional[str] = None,
+        upvotes: int = 0,
+        media_urls: Optional[List[str]] = None,
+        github_repo: Optional[str] = None,
+        project_page: Optional[str] = None,
     ):
         self.paper_id = paper_id
         self.title = title
@@ -22,7 +26,11 @@ class Paper:
         self.explanation = explanation
         self.insights = insights or {"insights": []}
         self.pdf_url = pdf_url
-        self.processed_at = datetime.utcnow()
+        self.upvotes = upvotes
+        self.media_urls = media_urls or []
+        self.github_repo = github_repo
+        self.project_page = project_page
+        self.processed_at = datetime.now(timezone.utc)
 
     def to_dict(self) -> Dict:
         return {
@@ -34,13 +42,17 @@ class Paper:
             "explanation": self.explanation,
             "insights": self.insights,
             "pdf_url": self.pdf_url,
+            "upvotes": self.upvotes,
+            "media_urls": self.media_urls,
+            "github_repo": self.github_repo,
+            "project_page": self.project_page,
             "processed_at": self.processed_at,
         }
 
 
 class ProcessingMetadata:
     def __init__(self, last_processed_date: datetime = None):
-        self.last_processed_date = last_processed_date or datetime.utcnow()
+        self.last_processed_date = last_processed_date or datetime.now(timezone.utc)
         self.is_processing = False
 
     def to_dict(self) -> Dict:

@@ -1,7 +1,7 @@
 import logging
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 
 from paperflux.src.services.paper_processor import PaperProcessor

@@ -5,7 +5,7 @@ from paperflux.src.agents.gemini_client import GeminiClient
 from paperflux.src.agents.skill import load_skill
 from paperflux.src.config.settings import (
     AGENTS_DIR,
-    GEMINI_ANALYST_MODEL,
+    GEMINI_ANALYST_MODELS,
     load_agent_keys,
 )
 
@@ -24,7 +24,7 @@ class PaperAnalystAgent:
         self.skill = body
         self.client = client or GeminiClient(
             api_keys=load_agent_keys("GEMINI_ANALYST_API_KEY"),
-            model=GEMINI_ANALYST_MODEL,
+            models=GEMINI_ANALYST_MODELS,
         )
 
     def run(
@@ -35,7 +35,8 @@ class PaperAnalystAgent:
         paper_id: str = "",
     ) -> str:
         user_text = (
-            "Analyze the attached research paper PDF using your skill instructions.\n\n"
+            "Analyze the attached research paper PDF using your skill instructions. "
+            "Use the exact output template and keep every number tied to its source.\n\n"
             f"Paper ID: {paper_id or 'unknown'}\n"
             f"Title: {title or 'See PDF'}\n"
             f"Abstract/summary from the listing:\n{summary or '(not provided)'}\n"
@@ -45,4 +46,5 @@ class PaperAnalystAgent:
             user_text=user_text,
             system_instruction=self.skill,
             temperature=0.2,
+            max_output_tokens=32768,
         )

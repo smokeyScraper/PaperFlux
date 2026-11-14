@@ -21,7 +21,7 @@ from paperflux.src.services.database import DatabaseService
 from paperflux.src.services.paper_processor import PaperProcessor
 from paperflux.src.services.scheduler import PaperScheduler
 from paperflux.src.config.settings import TEMP_DIR
-from paperflux.src.ui.visuals import render_insight_visual
+from paperflux.src.ui.paper_view import has_explainer_pack, render_insights, render_overview
 
 os.makedirs(TEMP_DIR, exist_ok=True)
 
@@ -90,8 +90,9 @@ st.markdown("### AI Research Paper Insights")
 st.sidebar.header("About PaperFlux")
 st.sidebar.markdown(
     """
-    PaperFlux fetches Hugging Face Daily Papers, then runs two Gemini agents:
-    one for in-depth technical explanation and one for 2–3 insights with diagrams.
+    PaperFlux picks the most-upvoted Hugging Face Daily Papers, then runs two agents:
+    an analyst that explains the PDF in depth, and a planner that designs animated
+    diagrams, charts and a TL;DR. Diagrams are drawn by our own renderer, not by the model.
     
     Papers are updated automatically once daily at 8:00 AM UTC on weekdays.
     """
@@ -200,37 +201,31 @@ with tab1:
                 pdf_link = get_pdf_download_link(paper_id, title)
                 st.markdown(pdf_link, unsafe_allow_html=True)
                 
-                paper_tab1, paper_tab2, paper_tab3 = st.tabs(
-                    ["Summary", "Insights & Diagrams", "Detailed Analysis"]
-                )
+                if paper.get("upvotes"):
+                    st.caption(f"👍 {paper['upvotes']} upvotes on Hugging Face Daily Papers")
 
-                with paper_tab1:
-                    st.markdown(paper["summary"])
+                pack = has_explainer_pack(paper)
+                labels = (["Overview"] if pack else []) + [
+                    "Insights & Diagrams", "Detailed Analysis", "Abstract"
+                ]
+                tabs = st.tabs(labels)
+                tab_map = dict(zip(labels, tabs))
 
-                with paper_tab2:
-                    insights_doc = paper.get("insights") or {}
-                    insight_items = insights_doc.get("insights") or []
-                    if insight_items:
-                        for idx, insight in enumerate(insight_items, start=1):
-                            st.markdown(f"### {idx}. {insight.get('title', 'Insight')}")
-                            if insight.get("summary"):
-                                st.markdown(insight["summary"])
-                            visual = insight.get("visual") or insight.get("diagram") or {}
-                            render_insight_visual(visual)
-                            st.divider()
-                    elif insights_doc.get("raw"):
-                        st.warning("Insights could not be parsed; showing raw model output.")
-                        st.markdown(insights_doc["raw"])
-                    elif insights_doc.get("parse_error"):
-                        st.warning(f"Insights agent error: {insights_doc['parse_error']}")
-                    else:
-                        st.warning("Insights are not available for this paper.")
+                if pack:
+                    with tab_map["Overview"]:
+                        render_overview(paper)
 
-                with paper_tab3:
+                with tab_map["Insights & Diagrams"]:
+                    render_insights(paper)
+
+                with tab_map["Detailed Analysis"]:
                     if paper.get("explanation"):
                         st.markdown(paper["explanation"])
                     else:
                         st.warning("Detailed analysis not available for this paper.")
+
+                with tab_map["Abstract"]:
+                    st.markdown(paper["summary"])
 
 with tab2:
     st.markdown("""
@@ -242,22 +237,22 @@ with tab2:
     
     1. **Data Collection**: We automatically fetch the daily curated papers from Hugging Face's API.
     2. **Automatic Processing**: Papers are processed every weekday at 8:00 AM UTC.
-    3. **Analyst agent**: Gemini Flash reads the PDF and writes a deep technical explanation (`SKILL.md`).
-    4. **Insights agent**: A second Gemini Flash key turns that writeup plus the PDF into 2–3 insights and Mermaid diagrams.
+    3. **Analyst agent**: Gemini reads the PDF and writes a layered explanation (TL;DR, big idea, how it works, math, evidence, critique).
+    4. **Insights planner**: a second agent returns a structured plan (core concept, key numbers, 2–3 insights). Our renderer lays out and animates the diagrams, so figures stay clean and consistent.
     5. **Data Storage**: Results are stored in MongoDB for fast access.
     
     ### Features
     
     - **Daily Updates**: New papers are processed once per day automatically.
     - **In-depth Analysis**: Get detailed explanations of complex research.
-    - **Insights & Diagrams**: Method/pipeline diagrams generated per paper.
+    - **Animated explainers**: step-by-step diagrams you can export as GIFs, plus charts built from the paper's own numbers.
     - **Original Access**: Download the original PDF of any paper.
     
     ### Technologies Used
     
     - Streamlit for the web interface
     - MongoDB for data storage
-    - Google Gemini (separate keys for analyst and insights agents)
+    - Google Gemini free tier (model fallback chain, quota-aware client)
     - Hugging Face API for paper collection
     """)
 

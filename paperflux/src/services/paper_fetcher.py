@@ -9,6 +9,8 @@ from paperflux.src.models.models import Paper
 
 logger = logging.getLogger("paperflux.paper_fetcher")
 
+MEDIA_EXTENSIONS = (".gif", ".png", ".jpg", ".jpeg", ".webp", ".mp4", ".webm")
+
 class PaperFetcher:
     def __init__(self):
         os.makedirs(TEMP_DIR, exist_ok=True)
@@ -25,6 +27,30 @@ class PaperFetcher:
                 error_msg = f"API request failed: {response.status}"
                 logger.error(error_msg)
                 raise Exception(error_msg)
+
+    @staticmethod
+    def select_top(papers: List[dict], limit: int) -> List[dict]:
+        """Keep the most-upvoted papers. Free-tier quotas are per day, so we budget."""
+        def upvotes(entry: dict) -> int:
+            try:
+                return int((entry.get("paper") or {}).get("upvotes") or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        ranked = sorted(papers, key=upvotes, reverse=True)
+        return ranked[:limit] if limit and limit > 0 else ranked
+
+    @staticmethod
+    def clean_media_urls(entry: dict) -> List[str]:
+        """Author-provided demo media (GIF/image/video) when Hugging Face exposes it."""
+        paper = entry.get("paper") or {}
+        raw = entry.get("mediaUrls") or paper.get("mediaUrls") or []
+        urls: List[str] = []
+        for url in raw if isinstance(raw, list) else []:
+            if isinstance(url, str) and url.startswith("https://") and \
+                    url.lower().split("?")[0].endswith(MEDIA_EXTENSIONS):
+                urls.append(url)
+        return urls[:3]
 
     async def download_paper(self, paper_entry: dict) -> Optional[str]:
         """
@@ -87,4 +113,8 @@ class PaperFetcher:
             summary=paper_data["summary"],
             published_at=paper_data["publishedAt"],
             pdf_url=PDF_BASE_URL.format(id=paper_data["id"]),
+            upvotes=int(paper_data.get("upvotes") or 0),
+            media_urls=self.clean_media_urls(paper_entry),
+            github_repo=paper_data.get("githubRepo") or None,
+            project_page=paper_data.get("projectPage") or None,
         )

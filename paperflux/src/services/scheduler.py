@@ -6,6 +6,7 @@ import pytz
 
 from paperflux.src.services.paper_processor import PaperProcessor
 from paperflux.src.services.database import DatabaseService
+from paperflux.src.services.schedule_rules import is_due
 
 logger = logging.getLogger("paperflux.scheduler")
 
@@ -73,24 +74,9 @@ class PaperScheduler:
         if metadata.is_processing:
             return False
         
-        # Get the date of the last processing
-        last_date = metadata.last_processed_date.date()
-        current_date = current_time.date()
-        
-        # Only process on weekdays
-        if current_time.weekday() >= 5:  # Saturday or Sunday
-            return False
-            
-        # Check if we already processed today
-        if last_date == current_date:
-            return False
-            
-        # Check if it's after 8:00 AM UTC
-        target_time = datetime.combine(current_date, datetime.min.time(), tzinfo=pytz.UTC)
-        target_time = target_time.replace(hour=8, minute=0)
-        
-        return current_time >= target_time
-    
+        # Weekdays only, once per UTC day, at or after the scheduled hour
+        return is_due(current_time, metadata.last_processed_date)
+
     def stop_scheduler(self):
         """Stop the scheduler thread"""
         self._running = False

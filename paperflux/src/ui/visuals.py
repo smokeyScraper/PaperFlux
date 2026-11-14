@@ -74,7 +74,7 @@ def _flow_extras(spec_json: str, key: str) -> None:
             for index, step in enumerate(spec.steps, start=1):
                 st.markdown(f"{index}. {step.caption}")
     with right:
-        if st.button("🎞️ Make GIF", key=f"gif-{key}-{spec.fingerprint()}", use_container_width=False):
+        if st.button("🎞️ Make GIF", key=f"gif-{key}-{spec.fingerprint()}"):
             with st.spinner("Rendering GIF…"):
                 data = _flow_gif(spec_json)
             if data:

@@ -2,6 +2,7 @@ import time
 from datetime import datetime, timezone
 from pymongo import MongoClient
 from paperflux.src.models.models import Paper, ProcessingMetadata
+from paperflux.src.services.schedule_rules import is_stale
 import threading
 import logging
 import os
@@ -137,26 +138,49 @@ class DatabaseService:
         )
 
     def set_processing_status(self, is_processing: bool):
-        """Set the processing status"""
+        """Set the processing flag. A start timestamp lets us heal a flag left behind
+        by a run that died (e.g. the Space restarted mid-processing)."""
         logger.info(f"Setting processing status to {is_processing}")
+        update = {"is_processing": is_processing}
+        if is_processing:
+            update.update({"processing_started_at": datetime.now(timezone.utc),
+                           "progress_done": 0, "progress_total": 0})
+        self.metadata_collection.update_one(
+            {"_id": "processing_metadata"}, {"$set": update}, upsert=True
+        )
+
+    def set_processing_progress(self, done: int, total: int):
+        """Live progress for the UI progress bar."""
         self.metadata_collection.update_one(
             {"_id": "processing_metadata"},
-            {"$set": {"is_processing": is_processing}},
-            upsert=True
+            {"$set": {"progress_done": int(done), "progress_total": int(total)}},
+            upsert=True,
         )
 
     def get_processing_metadata(self) -> ProcessingMetadata:
-        """Get the processing metadata"""
+        """Get the processing metadata (self-healing a stale 'processing' flag)"""
         data = self.metadata_collection.find_one({"_id": "processing_metadata"})
-        
+
         if not data:
             # No metadata exists yet
             return ProcessingMetadata()
-        
+
         metadata = ProcessingMetadata()
+        metadata.has_run = "last_processed_date" in data
         metadata.last_processed_date = data.get("last_processed_date", datetime.now(timezone.utc))
         metadata.is_processing = data.get("is_processing", False)
-        
+        metadata.progress_done = int(data.get("progress_done", 0) or 0)
+        metadata.progress_total = int(data.get("progress_total", 0) or 0)
+
+        if metadata.is_processing and is_stale(
+            data.get("processing_started_at"), datetime.now(timezone.utc)
+        ) and data.get("processing_started_at") is not None:
+            logger.warning("Clearing a stale processing flag left by a run that never finished")
+            self.metadata_collection.update_one(
+                {"_id": "processing_metadata"}, {"$set": {"is_processing": False}}
+            )
+            metadata.is_processing = False
+
         return metadata
 
     def should_process_today(self) -> bool:

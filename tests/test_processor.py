@@ -1,7 +1,6 @@
 import asyncio
 import os
 import tempfile
-import threading
 import unittest
 from unittest.mock import patch
 
@@ -54,6 +53,9 @@ class FakeDB:
     def set_processing_status(self, flag):
         self.status.append(flag)
 
+    def set_processing_progress(self, done, total):
+        self.progress = (done, total)
+
 
 class FakeFetcher:
     def __init__(self, papers, fail=False):
@@ -104,8 +106,7 @@ def make_processor(db, fetcher, analyst, insights):
     proc = pp.PaperProcessor.__new__(pp.PaperProcessor)
     proc.fetcher, proc.db = fetcher, db
     proc._analyst, proc._insights_agent = analyst, insights
-    proc._running = False
-    proc._quota_event = threading.Event()
+    proc._init_runtime_state()
     return proc
 
 

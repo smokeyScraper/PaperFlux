@@ -24,8 +24,29 @@ class PaperProcessor:
         self.db = DatabaseService()
         self._analyst = None
         self._insights_agent = None
+        self._init_runtime_state()
+
+    def _init_runtime_state(self):
         self._running = False
         self._quota_event = threading.Event()
+        self._progress_lock = threading.Lock()
+        self._done = 0
+        self._total = 0
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    def _report_progress(self, increment: int = 0, total: int = None):
+        with self._progress_lock:
+            if total is not None:
+                self._total = total
+            self._done += increment
+            done, total_now = self._done, self._total
+        try:
+            self.db.set_processing_progress(done, total_now)
+        except Exception as e:  # progress is cosmetic, never fail a run over it
+            logger.debug("Could not report progress: %s", e)
 
     @property
     def analyst(self):
@@ -139,6 +160,8 @@ class PaperProcessor:
             logger.info("Selected top %s papers by upvotes", len(papers))
 
             todo = [p for p in papers if not self.db.has_complete_paper(p["paper"]["id"])]
+            self._done = 0
+            self._report_progress(increment=len(papers) - len(todo), total=len(papers))
             paper_paths = await self.fetcher.download_papers(todo)
             logger.info("Downloaded %s/%s PDFs for %s pending papers", len(paper_paths), len(todo), len(todo))
 
@@ -155,6 +178,8 @@ class PaperProcessor:
                         results[pid] = FAILED
                 for pid, future in futures.items():
                     results[pid] = future.result()
+                    if results[pid] == DONE:
+                        self._report_progress(increment=1)
 
             done = sum(1 for r in results.values() if r == DONE)
             quota = sum(1 for r in results.values() if r == QUOTA)

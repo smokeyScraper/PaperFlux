@@ -1,0 +1,11 @@
+# Follows the visitor's light/dark preference (no `base` set). Our diagrams draw their
+# own card background, so they read well in both.
+[theme]
+primaryColor = "#6366f1"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false

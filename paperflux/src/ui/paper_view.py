@@ -73,9 +73,12 @@ def render_insights(paper: dict[str, Any]) -> None:
                 st.caption(f"Where in the paper: {insight['evidence']}")
             st.divider()
     elif doc.get("raw"):
-        st.warning("Insights could not be parsed; showing raw model output.")
+        st.info("The diagrams for this paper could not be structured, so here is the model's raw "
+                "note instead. The written analysis is unaffected.")
         st.markdown(doc["raw"])
-    elif doc.get("parse_error"):
-        st.warning(f"Insights are not ready yet: {doc['parse_error']}")
+    elif "quota" in str(doc.get("parse_error", "")).lower() or not doc:
+        st.info("✨ Diagrams for this paper are still being prepared. They will show up here "
+                "automatically; the written analysis is already available.")
     else:
-        st.warning("Insights are not available for this paper.")
+        st.info("We could not generate diagrams for this paper. The written analysis is available "
+                "in the Analysis tab.")

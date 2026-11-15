@@ -20,6 +20,8 @@ load_dotenv()
 
 logger = logging.getLogger("paperflux.database")
 PODCAST_BUCKET = "podcast_audio"
+FIGURE_BUCKET = "paper_figures"
+
 
 def paper_is_complete(doc) -> bool:
     """A stored paper needs no more model calls when it has an analysis and a usable v3 pack."""
@@ -89,13 +91,17 @@ class DatabaseService:
         """Remove papers that are not part of the current batch (and their podcast audio)."""
         keep = list(keep_ids)
         result = self.collection.delete_many({"paper_id": {"$nin": keep}})
-        try:
-            for stale in self.audio_bucket.find({"metadata.paper_id": {"$nin": keep}}):
-                self.audio_bucket.delete(stale._id)
-        except Exception as e:  # audio cleanup must never block pruning papers
-            logger.warning("Could not prune podcast audio: %s", e)
+        self._prune_bucket(self.audio_bucket, keep)
+        self._prune_bucket(self.figure_bucket, keep)
         self._invalidate_cache()
         return result.deleted_count
+
+    def _prune_bucket(self, bucket, keep):
+        try:
+            for stale in bucket.find({"metadata.paper_id": {"$nin": keep}}):
+                bucket.delete(stale._id)
+        except Exception as e:  # file cleanup must never block pruning papers
+            logger.warning("Could not prune stored files: %s", e)
 
     # ---- podcasts ------------------------------------------------------------
     @property
@@ -120,8 +126,43 @@ class DatabaseService:
         return str(file_id)
 
     def get_podcast_audio(self, file_id: str):
+        return self._read_file(self.audio_bucket, file_id)
+
+    # ---- figures from the paper ---------------------------------------------
+    @property
+    def figure_bucket(self):
+        """GridFS bucket for figures lifted from the PDF. Bytes never go in the paper document."""
+        if getattr(self, "_figure_bucket", None) is None:
+            self._figure_bucket = gridfs.GridFSBucket(self.db, bucket_name=FIGURE_BUCKET)
+        return self._figure_bucket
+
+    def save_paper_figures(self, paper_id: str, figures) -> None:
+        """Replace this paper's figures. ``figures`` is a list of PaperFigure (png bytes included)."""
+        for old in self.figure_bucket.find({"metadata.paper_id": paper_id}):
+            self.figure_bucket.delete(old._id)
+        stored = []
+        for fig in figures:
+            file_id = self.figure_bucket.upload_from_stream(
+                f"{paper_id}-figure-{fig.number}.png",
+                fig.png,
+                metadata={"paper_id": paper_id, "mime": "image/png"},
+            )
+            stored.append({
+                "label": fig.label,
+                "caption": fig.caption,
+                "page": fig.page,
+                "file_id": str(file_id),
+            })
+        self.collection.update_one({"paper_id": paper_id}, {"$set": {"figures": stored}})
+        self._invalidate_cache()
+
+    def get_paper_figure(self, file_id: str):
+        return self._read_file(self.figure_bucket, file_id)
+
+    @staticmethod
+    def _read_file(bucket, file_id: str):
         try:
-            return self.audio_bucket.open_download_stream(ObjectId(file_id)).read()
+            return bucket.open_download_stream(ObjectId(file_id)).read()
         except (NoFile, InvalidId):
             return None
 

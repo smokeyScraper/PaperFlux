@@ -56,6 +56,12 @@ class FakeDB:
     def set_processing_progress(self, done, total):
         self.progress = (done, total)
 
+    def save_paper_figures(self, paper_id, figures):
+        self.docs.setdefault(paper_id, {"paper_id": paper_id})
+        self.docs[paper_id]["figures"] = [
+            {"label": fig.label, "caption": fig.caption, "page": fig.page} for fig in figures
+        ]
+
 
 class FakeFetcher:
     def __init__(self, papers, fail=False):
@@ -143,11 +149,24 @@ class ProcessorTest(unittest.TestCase):
         self.assertEqual(db.processed_marked, 1)
 
     def test_complete_papers_are_skipped_without_model_calls(self):
-        db = FakeDB({"a": {"paper_id": "a", "explanation": "e", "insights": V3}})
+        db = FakeDB({"a": {"paper_id": "a", "explanation": "e", "insights": V3, "figures": []}})
         fetcher, analyst, insights = FakeFetcher([entry("a")]), FakeAnalyst(), FakeInsights()
         proc = make_processor(db, fetcher, analyst, insights)
         self.assertTrue(run(proc))
         self.assertEqual((analyst.calls, insights.calls, fetcher.downloaded), ([], [], []))
+
+    def test_stored_papers_get_figures_without_another_model_call(self):
+        from paperflux.src.figures.extract import PaperFigure
+
+        db = FakeDB({"a": {"paper_id": "a", "explanation": "e", "insights": V3}})
+        fetcher, analyst = FakeFetcher([entry("a")]), FakeAnalyst()
+        figure = PaperFigure(1, "Figure 1", "Overview of the architecture.", 2, b"png")
+        proc = make_processor(db, fetcher, analyst, FakeInsights())
+        with patch.object(pp, "extract_figures", return_value=[figure]):
+            self.assertTrue(run(proc))
+        self.assertEqual(analyst.calls, [])
+        self.assertEqual(fetcher.downloaded, ["a"])
+        self.assertEqual(db.docs["a"]["figures"][0]["caption"], "Overview of the architecture.")
 
     def test_insights_quota_stores_analysis_keeps_day_open_then_resumes(self):
         db = FakeDB()

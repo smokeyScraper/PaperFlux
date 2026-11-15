@@ -200,6 +200,28 @@ class AppSmokeTest(unittest.TestCase):
         self.assert_healthy(at)
         self.assertEqual([e.label for e in at.expander], ["TL;DR", "The Big Idea", "Where to Be Skeptical"])
         self.assertTrue(any("min read" in c for c in texts(at.caption)))
+        self.assertNotIn("Figures from the paper", " ".join(texts(at.markdown)))
+
+    def test_analysis_cites_figures_taken_from_the_paper(self):
+        from paperflux.src.services import database
+        paper = v3_paper()
+        paper["figures"] = [{
+            "label": "Figure 1", "caption": "Overview of the model architecture.",
+            "page": 2, "file_id": "fig1",
+        }]
+        png = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02"
+            b"\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe\x02"
+            b"\xfe\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+        with patch.object(database.DatabaseService, "get_paper_figure", return_value=png):
+            at = boot([paper], query={"paper": "2611.00001", "view": "analysis"})
+        self.assert_healthy(at)
+        shown = " ".join(texts(at.markdown) + texts(at.caption))
+        self.assertIn("Figures from the paper", shown)
+        self.assertIn("Figure 1.", shown)
+        self.assertIn("Overview of the model architecture.", shown)
+        self.assertIn("From the paper, p. 2.", shown)
 
     def test_unknown_or_stale_link_falls_back_to_the_feed(self):
         at = boot([v3_paper()], query={"paper": "does-not-exist"})

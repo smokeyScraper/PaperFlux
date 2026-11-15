@@ -29,6 +29,7 @@ def render_detail(
     papers: list[dict[str, Any]],
     base_url: str = "",
     load_audio: Optional[Callable[[str], Optional[bytes]]] = None,
+    load_figure: Optional[Callable[[str], Optional[bytes]]] = None,
 ) -> None:
     pid = paper["paper_id"]
     prev_id, next_id, position, total = neighbors(papers, pid)
@@ -52,7 +53,7 @@ def render_detail(
     view = view_selector(pid)
 
     try:
-        _render_view(paper, view)
+        _render_view(paper, view, load_figure)
     except Exception:  # one broken view must never take the page down
         logger.exception("Rendering view %s failed for paper %s", view, pid)
         st.error("Something went wrong while showing this tab. Try another tab, or reload the page.")
@@ -82,7 +83,7 @@ def _action_row(paper: dict[str, Any], base_url: str) -> None:
             )
 
 
-def _render_view(paper: dict[str, Any], view: str) -> None:
+def _render_view(paper: dict[str, Any], view: str, load_figure=None) -> None:
     if view == "overview":
         if paper_status(paper) == EXPLAINER:
             render_overview(paper)
@@ -91,7 +92,7 @@ def _render_view(paper: dict[str, Any], view: str) -> None:
     elif view == "insights":
         render_insights(paper)
     elif view == "analysis":
-        _render_analysis(paper)
+        _render_analysis(paper, load_figure)
     else:
         _render_abstract(paper)
 
@@ -126,8 +127,13 @@ def _overview_fallback(paper: dict[str, Any]) -> None:
                   args=(pid, "analysis"))
 
 
+@st.cache_data(show_spinner=False, max_entries=32, ttl=3600)
+def _figure_bytes(file_id: str, _load: Callable[[str], Optional[bytes]]) -> Optional[bytes]:
+    return _load(file_id) if file_id else None
+
+
 @st.fragment
-def _render_analysis(paper: dict[str, Any]) -> None:
+def _render_analysis(paper: dict[str, Any], load_figure=None) -> None:
     """Long reads are chunked into sections so people can scan, not scroll."""
     explanation = paper.get("explanation")
     if not explanation:
@@ -140,8 +146,7 @@ def _render_analysis(paper: dict[str, Any]) -> None:
         sections = split_sections(explanation)
         if len(sections) < 2:
             st.markdown(explanation)
-            return
-        if st.toggle("Show all sections expanded", key=f"all-{pid}"):
+        elif st.toggle("Show all sections expanded", key=f"all-{pid}"):
             for title, body in sections:
                 st.markdown(f"#### {title}")
                 st.markdown(body)
@@ -149,6 +154,32 @@ def _render_analysis(paper: dict[str, Any]) -> None:
             for index, (title, body) in enumerate(sections):
                 with st.expander(title, expanded=index < 2):
                     st.markdown(body)
+        _render_cited_figures(paper, load_figure)
+
+
+def _render_cited_figures(paper: dict[str, Any], load_figure) -> None:
+    """The authors' own figures. Nothing is said when the paper has none."""
+    figures = paper.get("figures") or []
+    if not figures or load_figure is None:
+        return
+    loaded = []
+    for fig in figures:
+        data = _figure_bytes(str(fig.get("file_id") or ""), load_figure)
+        if data:
+            loaded.append((fig, data))
+    if not loaded:
+        return
+    st.divider()
+    st.markdown("#### Figures from the paper")
+    st.caption("The authors' own figures, with the captions from the paper.")
+    for fig, data in loaded:
+        st.image(data, width="stretch")
+        label = fig.get("label") or "Figure"
+        caption = (fig.get("caption") or "").strip()
+        cite = f"**{label}.** {caption}" if caption else f"**{label}.**"
+        page = fig.get("page")
+        st.markdown(cite)
+        st.caption(f"From the paper, p. {page}." if page else "From the paper.")
 
 
 __all__ = ["render_detail", "VIEW_LABELS"]

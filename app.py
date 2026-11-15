@@ -40,6 +40,7 @@ turns each one into something you can understand in a couple of minutes.
 - A TL;DR, the core idea, and the headline numbers
 - Step-by-step animated diagrams and charts built from the paper's own results
 - A layered written analysis: how it works, the math in plain words, the evidence, and where to be skeptical
+- The paper's own figures, shown with the authors' captions
 - For the top papers, a calm 5-minute audio conversation between two hosts, with a transcript
 
 **How it works**
@@ -106,7 +107,8 @@ if selected_id and paper is None:
     st.button("Show today's papers", on_click=goto)
 
 if paper is not None:
-    render_detail(paper, papers, _base_url(), load_audio=db.get_podcast_audio)
+    render_detail(paper, papers, _base_url(), load_audio=db.get_podcast_audio,
+                  load_figure=db.get_paper_figure)
 elif not papers:
     render_empty(meta.is_processing, next_update_text(meta))
 else:

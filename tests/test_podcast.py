@@ -331,6 +331,7 @@ class DatabasePodcastTest(unittest.TestCase):
         db._cache, db._cache_timestamp = {}, 0
         db._cache_lock = __import__("threading").Lock()
         db._audio_bucket = MagicMock()
+        db._figure_bucket = MagicMock()
         return db
 
     def test_tts_reservation_is_atomic_per_quota_day(self):
@@ -351,13 +352,15 @@ class DatabasePodcastTest(unittest.TestCase):
         self.assertEqual(db.collection.update_one.call_args.args[1], {"$set": {"paper_id": "a", "explanation": "x"}})
         db.collection.replace_one.assert_not_called()
 
-    def test_pruning_papers_also_prunes_their_audio(self):
+    def test_pruning_papers_also_prunes_their_audio_and_figures(self):
         db = self.make()
         db.collection.delete_many.return_value.deleted_count = 1
         db._audio_bucket.find.return_value = [MagicMock(_id="old")]
+        db._figure_bucket.find.return_value = [MagicMock(_id="fig")]
         db.delete_papers_not_in(["keep"])
         db._audio_bucket.find.assert_called_with({"metadata.paper_id": {"$nin": ["keep"]}})
         db._audio_bucket.delete.assert_called_with("old")
+        db._figure_bucket.delete.assert_called_with("fig")
 
     def test_bad_audio_ids_return_none(self):
         self.assertIsNone(self.make().get_podcast_audio("not-an-object-id"))

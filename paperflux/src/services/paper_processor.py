@@ -8,6 +8,7 @@ from paperflux.src.agents.llm_errors import QuotaExhaustedError
 from paperflux.src.agents.paper_analyst.agent import PaperAnalystAgent
 from paperflux.src.agents.paper_analyst.brief import split_visual_brief
 from paperflux.src.agents.paper_insights.agent import PaperInsightsAgent
+from paperflux.src.figures.extract import extract_figures
 from paperflux.src.config.settings import (
     MAX_PAPER_WORKERS,
     MAX_PAPERS,
@@ -177,6 +178,7 @@ class PaperProcessor:
             paper_obj.insights = insights
             logger.info("Storing paper %s", paper_id)
             self.db.upsert_paper(paper_obj)
+            self._store_figures(paper_id, pdf_path)
             return QUOTA if quota_hit else DONE
 
         except QuotaExhaustedError as e:
@@ -234,6 +236,8 @@ class PaperProcessor:
                     if results[pid] == DONE:
                         self._report_progress(increment=1)
 
+            await self._backfill_figures(papers)
+
             done = sum(1 for r in results.values() if r == DONE)
             quota = sum(1 for r in results.values() if r == QUOTA)
             logger.info("Processed: %s done, %s waiting on quota, %s failed", done, quota,
@@ -262,3 +266,41 @@ class PaperProcessor:
             self.db.set_processing_status(False)
             if not completed:
                 logger.info("Run did not complete; existing papers were left untouched")
+
+    def _needs_figures(self, paper_id: str) -> bool:
+        """A stored paper we have not tried to lift figures from yet."""
+        doc = self.db.get_paper_by_id(paper_id)
+        return bool(doc) and "figures" not in (doc or {})
+
+    def _store_figures(self, paper_id: str, pdf_path: str) -> None:
+        """Lift figures from the PDF already on disk. Never raises into the paper run."""
+        if not pdf_path:
+            return
+        try:
+            found = extract_figures(pdf_path)
+            if found is None:
+                logger.info("Figures for %s could not be read; will retry next run", paper_id)
+                return
+            self.db.save_paper_figures(paper_id, found)
+            logger.info("Stored %s figure(s) for %s", len(found), paper_id)
+        except Exception as exc:
+            logger.warning("Could not store figures for %s: %s", paper_id, exc)
+
+    async def _backfill_figures(self, papers):
+        """Papers already analyzed before figure lifting existed still get their figures.
+
+        This downloads the PDF only, and never calls a model.
+        """
+        pending = [p for p in papers if self._needs_figures(p["paper"]["id"])]
+        if not pending:
+            return
+        paths = await self.fetcher.download_papers(pending)
+        for pid, path in paths.items():
+            try:
+                self._store_figures(pid, path)
+            finally:
+                if path and os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except Exception as exc:
+                        logger.warning("Could not remove temporary file %s: %s", path, exc)

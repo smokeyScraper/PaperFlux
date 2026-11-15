@@ -67,6 +67,8 @@ What the renderer can show:
 
 Flows and token sequences animate inline. An insight with no diagram is simply omitted, so the text stands on its own.
 
+The Analysis tab shows the paper's own figures, as many as can be cut out of the PDF we already download (each caption plus the drawing next to it, including vector diagrams and appendix figures). They are stored in GridFS and cited with the authors' caption and page. No extra model call. A paper with no extractable figure simply has no figures section.
+
 ## Podcasts
 
 For the top papers, two calm hosts (Maya and Theo by default) talk the paper through in about 5 minutes: the hook, the problem, the idea, the running example, the evidence, the catch, and a takeaway. Both ask and both explain. A **Listen** panel on the paper page plays the episode, shows the transcript, and offers the MP3; the feed marks those papers with a Podcast badge.

@@ -94,6 +94,8 @@ def rpm_for(model: str) -> int:
     if model in _RPM_OVERRIDES:
         return _RPM_OVERRIDES[model]
     name = model.lower()
+    if "tts" in name:
+        return 3
     if "gemma" in name:
         return 15
     if "lite" in name:
@@ -145,3 +147,48 @@ def load_agent_keys(agent_prefix: str) -> list[str]:
     if keys:
         return keys
     return collect_api_keys("GEMINI_API_KEY")
+
+
+# --------------------------------------------------------------------------
+# Podcasts: a two-host audio conversation per paper
+# --------------------------------------------------------------------------
+# The script is written by a text model (Flash-Lite first: ~500 requests/day), the audio by
+# one multi-speaker TTS call per episode. Free-tier TTS allows ~3 RPM / 10K TPM / 10 RPD,
+# so PODCASTS_PER_DAY is enforced with a counter in MongoDB (restarts and manual runs share it).
+PODCASTS_ENABLED = os.getenv("PAPERFLUX_PODCASTS", "1") not in {"0", "false", "False"}
+PODCASTS_PER_DAY = int(os.getenv("PAPERFLUX_PODCASTS_PER_DAY", "10"))
+PODCAST_MAX_ATTEMPTS = 2  # per paper: a paper that keeps failing must not drain the daily budget
+PODCAST_TARGET_WORDS = int(os.getenv("PAPERFLUX_PODCAST_WORDS", "700"))  # ~5 min at a calm pace
+DEFAULT_PODCAST_MODELS = [
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.6-flash",
+]
+GEMINI_PODCAST_MODELS = _model_chain("GEMINI_PODCAST_MODELS", "GEMINI_PODCAST_MODEL", DEFAULT_PODCAST_MODELS)
+# Confirm the exact id in AI Studio; unknown ids are skipped (404), so the chain also
+# covers the "-preview-" naming.
+DEFAULT_TTS_MODELS = ["gemini-3.8-flash-tts", "gemini-3.8-flash-preview-tts"]
+GEMINI_TTS_MODELS = _model_chain("GEMINI_TTS_MODELS", "GEMINI_TTS_MODEL", DEFAULT_TTS_MODELS)
+# Two calm hosts. Voice names are Gemini prebuilt voices ("Gentle" and "Smooth").
+PODCAST_HOSTS = (
+    {"name": os.getenv("PAPERFLUX_HOST_FEMALE", "Maya"), "gender": "female",
+     "voice": os.getenv("GEMINI_TTS_VOICE_FEMALE", "Vindemiatrix")},
+    {"name": os.getenv("PAPERFLUX_HOST_MALE", "Theo"), "gender": "male",
+     "voice": os.getenv("GEMINI_TTS_VOICE_MALE", "Algieba")},
+)
+
+
+def load_podcast_keys() -> list[str]:
+    """Podcast keys only, never borrowed from the analyst/insights (or legacy shared) keys:
+    the daily papers need that project's free-tier quota. Use a key from its own project."""
+    return collect_api_keys("GEMINI_PODCAST_API_KEY")
+
+
+def load_tts_keys() -> list[str]:
+    """TTS may get a project of its own; otherwise it uses the podcast project (TTS and the
+    script writer are different models, so they do not share a quota bucket)."""
+    return collect_api_keys("GEMINI_TTS_API_KEY") or load_podcast_keys()
+
+
+def load_paper_agent_keys() -> list[str]:
+    return load_agent_keys("GEMINI_ANALYST_API_KEY") + load_agent_keys("GEMINI_INSIGHTS_API_KEY")

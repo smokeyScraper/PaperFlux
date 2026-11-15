@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import threading
@@ -7,9 +8,17 @@ from paperflux.src.agents.llm_errors import QuotaExhaustedError
 from paperflux.src.agents.paper_analyst.agent import PaperAnalystAgent
 from paperflux.src.agents.paper_analyst.brief import split_visual_brief
 from paperflux.src.agents.paper_insights.agent import PaperInsightsAgent
-from paperflux.src.config.settings import MAX_PAPER_WORKERS, MAX_PAPERS
+from paperflux.src.config.settings import (
+    MAX_PAPER_WORKERS,
+    MAX_PAPERS,
+    PODCASTS_ENABLED,
+    load_paper_agent_keys,
+    load_podcast_keys,
+    load_tts_keys,
+)
 from paperflux.src.services.database import DatabaseService, paper_is_complete
 from paperflux.src.services.paper_fetcher import PaperFetcher
+from paperflux.src.services.podcast_producer import PodcastProducer
 
 logger = logging.getLogger("paperflux.paper_processor")
 
@@ -62,6 +71,44 @@ class PaperProcessor:
             self._insights_agent = PaperInsightsAgent()
             self._warn_if_shared_keys()
         return self._insights_agent
+
+    @property
+    def podcast_producer(self):
+        """None when podcasts are off or no key is configured for them."""
+        if getattr(self, "_podcast_producer", None) is None:
+            if not PODCASTS_ENABLED:
+                return None
+            podcast_keys = load_podcast_keys()
+            if not podcast_keys:
+                logger.info("Podcasts are off: set GEMINI_PODCAST_API_KEY to a key from its own Google Cloud "
+                            "project (they never borrow the analyst/insights quota)")
+                return None
+            shared = set(podcast_keys + load_tts_keys()) & set(load_paper_agent_keys())
+            if shared:
+                logger.warning(
+                    "Podcasts use %s key(s) that the analyst/insights agents also use, so they spend the same "
+                    "project's quota. Create the podcast key in a NEW project to keep them apart.",
+                    len(shared),
+                )
+            self._podcast_producer = PodcastProducer(self.db)
+        return self._podcast_producer
+
+    def _run_podcasts(self, paper_ids):
+        """After the analyses: one episode per paper, most upvoted first, within today's TTS budget."""
+        producer = self.podcast_producer
+        if producer is None:
+            return
+
+        def progress(done, total):
+            try:
+                self.db.set_processing_progress(done, total, stage="podcasts")
+            except Exception as e:  # cosmetic
+                logger.debug("Could not report podcast progress: %s", e)
+
+        try:
+            producer.run(paper_ids, on_progress=progress)
+        except Exception:  # podcasts are an extra: never fail the papers run over them
+            logger.exception("Podcast stage failed; papers are unaffected")
 
     def _warn_if_shared_keys(self):
         if self._analyst is None or self._insights_agent is None:
@@ -191,6 +238,7 @@ class PaperProcessor:
             quota = sum(1 for r in results.values() if r == QUOTA)
             logger.info("Processed: %s done, %s waiting on quota, %s failed", done, quota,
                         sum(1 for r in results.values() if r == FAILED))
+            await asyncio.to_thread(self._run_podcasts, today_ids)
 
             # Prune yesterday's papers only once today's batch has something to show.
             stored_today = [pid for pid in today_ids if self.db.get_paper_by_id(pid)]

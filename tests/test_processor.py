@@ -33,8 +33,8 @@ class FakeDB:
         self.pruned = None
         self.status = []
 
-    def upsert_paper(self, paper: Paper):
-        self.docs[paper.paper_id] = paper.to_dict()
+    def upsert_paper(self, paper: Paper):  # $set semantics, like the real service
+        self.docs[paper.paper_id] = {**self.docs.get(paper.paper_id, {}), **paper.to_dict()}
 
     def has_complete_paper(self, pid):
         return paper_is_complete(self.docs.get(pid))
@@ -104,10 +104,16 @@ class FakeInsights:
         return dict(V3)
 
 
+class NoPodcasts:
+    def run(self, paper_ids, on_progress=None):
+        return {}
+
+
 def make_processor(db, fetcher, analyst, insights):
     proc = pp.PaperProcessor.__new__(pp.PaperProcessor)
     proc.fetcher, proc.db = fetcher, db
     proc._analyst, proc._insights_agent = analyst, insights
+    proc._podcast_producer = NoPodcasts()  # never reach a real TTS client from a test
     proc._init_runtime_state()
     return proc
 
@@ -176,6 +182,13 @@ class ProcessorTest(unittest.TestCase):
         self.assertTrue(run(make_processor(db, FakeFetcher([entry("a")]), analyst, insights)))
         self.assertEqual(analyst.calls, ["a"])
         self.assertEqual(insights.briefs, ["- Encoder | new: yes"])
+
+    def test_rerunning_insights_keeps_a_recorded_podcast(self):
+        db = FakeDB({"a": {"paper_id": "a", "explanation": "analysis of a", "insights": {"insights": []},
+                           "podcast": {"status": "ready", "audio_id": "f1"}}})
+        self.assertTrue(run(make_processor(db, FakeFetcher([entry("a")]), FakeAnalyst(), FakeInsights())))
+        self.assertTrue(db.has_complete_paper("a"))
+        self.assertEqual(db.docs["a"]["podcast"]["audio_id"], "f1")
 
     def test_analyst_quota_stops_new_work_and_stores_nothing(self):
         db = FakeDB()

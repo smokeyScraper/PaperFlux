@@ -19,6 +19,11 @@ CHART = {"type": "chart", "caption": "Table 2",
 TOKENS = {"type": "tokens", "title": "Draft and verify", "tokens": ["The", {"text": "fox", "state": "hidden"}],
           "steps": [{"caption": "Draft", "changes": [{"index": 1, "state": "new"}]},
                     {"caption": "Verify", "changes": [{"index": 1, "state": "keep"}]}]}
+PODCAST = {"status": "ready", "audio_id": "f1", "mime": "audio/mpeg", "duration_s": 301.0,
+           "title": "Why tiny adapters work", "summary": "Maya and Theo on LoRA.",
+           "hosts": [{"name": "Maya", "voice": "Vindemiatrix"}, {"name": "Theo", "voice": "Algieba"}],
+           "turns": [{"speaker": "Maya", "text": "Have you ever wondered why fine-tuning is so expensive?"},
+                     {"speaker": "Theo", "text": "Every time."}]}
 ANALYSIS = "# T\n\n## TL;DR\n- Problem: X is slow.\n- Idea: do Y.\n\n## The Big Idea\nBecause Z.\n\n## Where to Be Skeptical\nOnly one dataset.\n"
 
 
@@ -151,6 +156,40 @@ class AppSmokeTest(unittest.TestCase):
         chart_gif.click().run()
         self.assert_healthy(at)
         self.assertEqual(len(at.get("download_button")), 2)  # the analysis download + the new GIF download
+
+    def test_ready_podcast_plays_with_transcript_and_shows_in_the_feed(self):
+        from paperflux.src.services import database
+        paper = {**v3_paper(), "podcast": PODCAST}
+        with patch.object(database.DatabaseService, "get_podcast_audio", return_value=b"ID3fake-mp3") as load:
+            at = boot([paper], query={"paper": "2611.00001"})
+            self.assert_healthy(at)
+            self.assertEqual(len(at.get("audio")), 1)
+            load.assert_called_with("f1")
+            md = " ".join(texts(at.markdown))
+            self.assertIn("Listen: Why tiny adapters work", md)
+            self.assertIn("**Maya:** Have you ever", md)
+            self.assertTrue(any("5 min" in c and "Maya and Theo" in c for c in texts(at.caption)))
+            self.assertIn("dl-podcast-2611.00001", [b.key for b in at.get("download_button")])
+            feed = boot([paper])
+            self.assertIn("Podcast", " ".join(texts(feed.markdown)))
+
+    def test_podcast_in_progress_is_announced_and_missing_audio_is_graceful(self):
+        from paperflux.src.services import database
+        at = boot([{**v3_paper(), "podcast": {"status": "scripted", "turns": PODCAST["turns"]}}], query={"paper": "2611.00001"})
+        self.assert_healthy(at)
+        self.assertTrue(any("being recorded" in c for c in texts(at.caption)))
+        self.assertEqual(at.get("audio"), [])
+        with patch.object(database.DatabaseService, "get_podcast_audio", return_value=None):
+            gone = boot([{**v3_paper(), "podcast": {**PODCAST, "audio_id": "gone"}}], query={"paper": "2611.00001"})
+            self.assert_healthy(gone)
+            self.assertTrue(any("not available right now" in c for c in texts(gone.caption)))
+
+    def test_sidebar_shows_the_podcast_stage(self):
+        meta = {"is_processing": True, "processing_started_at": datetime.now(timezone.utc), "stage": "podcasts",
+                "progress_done": 2, "progress_total": 5, "last_processed_date": datetime.now(timezone.utc) - timedelta(days=1)}
+        at = boot([v3_paper()], metadata=meta)
+        bars = [e for e in at.sidebar if getattr(e, "type", "") == "progress"]
+        self.assertIn("Recording podcasts", bars[0].proto.text)
 
     def test_analysis_view_is_sectioned_with_reading_time(self):
         at = boot([v3_paper()], query={"paper": "2611.00001", "view": "analysis"})

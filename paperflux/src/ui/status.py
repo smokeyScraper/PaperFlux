@@ -76,7 +76,10 @@ def _draw(db: Any, processor: Any, meta: Any, pending_count: int) -> None:
     now = datetime.now(timezone.utc)
     tz = user_timezone()
     if meta.is_processing:
-        if meta.progress_total:
+        if meta.progress_total and getattr(meta, "stage", "papers") == "podcasts":
+            st.progress(min(1.0, meta.progress_done / meta.progress_total),
+                        text=f"Recording podcasts… {meta.progress_done}/{meta.progress_total} done")
+        elif meta.progress_total:
             st.progress(min(1.0, meta.progress_done / meta.progress_total),
                         text=f"Analysing papers… {meta.progress_done}/{meta.progress_total} ready")
         else:

@@ -13,12 +13,14 @@ from paperflux.src.ui.content import (
     short_authors,
 )
 from paperflux.src.ui.nav import goto
+from paperflux.src.ui.podcast import has_podcast
 
 _BADGES = {
     EXPLAINER: ":violet-badge[:material/animation: Animated explainer]",
     PENDING: ":orange-badge[:material/hourglass_top: Diagrams coming soon]",
     ANALYSIS_ONLY: ":gray-badge[:material/article: Analysis]",
 }
+_PODCAST_BADGE = ":blue-badge[:material/headphones: Podcast]"
 
 
 def render_feed(papers: list[dict[str, Any]]) -> None:
@@ -40,9 +42,9 @@ def _card(rank: int, paper: dict[str, Any]) -> None:
             description = blurb(paper)
             if description:
                 st.markdown(description)
-            badge = _BADGES.get(paper_status(paper))
-            if badge:
-                st.markdown(badge)
+            badges = [_BADGES.get(paper_status(paper)), _PODCAST_BADGE if has_podcast(paper) else None]
+            if any(badges):
+                st.markdown(" ".join(b for b in badges if b))
         st.button(
             "Open →",
             key=f"open-{pid}",

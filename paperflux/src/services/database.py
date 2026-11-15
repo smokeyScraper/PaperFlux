@@ -1,8 +1,15 @@
 import time
 from datetime import datetime, timezone
+
+import gridfs
+from gridfs.errors import NoFile
+from bson import ObjectId
+from bson.errors import InvalidId
 from pymongo import MongoClient
+from pymongo.errors import DuplicateKeyError
+
 from paperflux.src.models.models import Paper, ProcessingMetadata
-from paperflux.src.services.schedule_rules import is_stale
+from paperflux.src.services.schedule_rules import is_stale, quota_day
 import threading
 import logging
 import os
@@ -12,6 +19,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 logger = logging.getLogger("paperflux.database")
+PODCAST_BUCKET = "podcast_audio"
 
 def paper_is_complete(doc) -> bool:
     """A stored paper needs no more model calls when it has an analysis and a usable v3 pack."""
@@ -69,18 +77,69 @@ class DatabaseService:
             self._cache_timestamp = 0
 
     def upsert_paper(self, paper: Paper):
-        """Insert or replace one paper by id (never wipes the other papers)."""
+        """Insert or update one paper by id. ``$set`` (not replace) so fields written by later
+        pipeline stages, like ``podcast``, survive a re-run of an earlier stage."""
         logger.info(f"Upserting paper: {paper.paper_id}")
         doc = paper.to_dict()
-        result = self.collection.replace_one({"paper_id": paper.paper_id}, doc, upsert=True)
+        result = self.collection.update_one({"paper_id": paper.paper_id}, {"$set": doc}, upsert=True)
         self._invalidate_cache()
         return result
 
     def delete_papers_not_in(self, keep_ids):
-        """Remove papers that are not part of the current batch."""
-        result = self.collection.delete_many({"paper_id": {"$nin": list(keep_ids)}})
+        """Remove papers that are not part of the current batch (and their podcast audio)."""
+        keep = list(keep_ids)
+        result = self.collection.delete_many({"paper_id": {"$nin": keep}})
+        try:
+            for stale in self.audio_bucket.find({"metadata.paper_id": {"$nin": keep}}):
+                self.audio_bucket.delete(stale._id)
+        except Exception as e:  # audio cleanup must never block pruning papers
+            logger.warning("Could not prune podcast audio: %s", e)
         self._invalidate_cache()
         return result.deleted_count
+
+    # ---- podcasts ------------------------------------------------------------
+    @property
+    def audio_bucket(self):
+        """GridFS bucket for episode audio: files are too big to live in the paper documents."""
+        if getattr(self, "_audio_bucket", None) is None:
+            self._audio_bucket = gridfs.GridFSBucket(self.db, bucket_name=PODCAST_BUCKET)
+        return self._audio_bucket
+
+    def set_podcast(self, paper_id: str, podcast: dict):
+        self.collection.update_one({"paper_id": paper_id}, {"$set": {"podcast": podcast}})
+        self._invalidate_cache()
+
+    def save_podcast_audio(self, paper_id: str, data: bytes, mime: str) -> str:
+        """Store one episode, replacing any earlier file for the paper. Returns the file id."""
+        for old in self.audio_bucket.find({"metadata.paper_id": paper_id}):
+            self.audio_bucket.delete(old._id)
+        ext = "mp3" if mime == "audio/mpeg" else "wav"
+        file_id = self.audio_bucket.upload_from_stream(
+            f"{paper_id}.{ext}", data, metadata={"paper_id": paper_id, "mime": mime}
+        )
+        return str(file_id)
+
+    def get_podcast_audio(self, file_id: str):
+        try:
+            return self.audio_bucket.open_download_stream(ObjectId(file_id)).read()
+        except (NoFile, InvalidId):
+            return None
+
+    def reserve_tts_request(self, limit: int) -> bool:
+        """Atomically claim one of today's TTS requests (quota day = Pacific date)."""
+        try:
+            self.metadata_collection.find_one_and_update(
+                {"_id": f"tts_usage_{quota_day()}", "count": {"$lt": int(limit)}},
+                {"$inc": {"count": 1}},
+                upsert=True,
+            )
+            return True
+        except DuplicateKeyError:  # today's document exists and is already at the limit
+            return False
+
+    def tts_requests_today(self) -> int:
+        doc = self.metadata_collection.find_one({"_id": f"tts_usage_{quota_day()}"}) or {}
+        return int(doc.get("count", 0) or 0)
 
     def has_complete_paper(self, paper_id: str) -> bool:
         """True if the paper is already stored with an analysis AND a v3 insights pack."""
@@ -144,16 +203,16 @@ class DatabaseService:
         update = {"is_processing": is_processing}
         if is_processing:
             update.update({"processing_started_at": datetime.now(timezone.utc),
-                           "progress_done": 0, "progress_total": 0})
+                           "progress_done": 0, "progress_total": 0, "stage": "papers"})
         self.metadata_collection.update_one(
             {"_id": "processing_metadata"}, {"$set": update}, upsert=True
         )
 
-    def set_processing_progress(self, done: int, total: int):
-        """Live progress for the UI progress bar."""
+    def set_processing_progress(self, done: int, total: int, stage: str = "papers"):
+        """Live progress for the UI progress bar (``stage`` is "papers" or "podcasts")."""
         self.metadata_collection.update_one(
             {"_id": "processing_metadata"},
-            {"$set": {"progress_done": int(done), "progress_total": int(total)}},
+            {"$set": {"progress_done": int(done), "progress_total": int(total), "stage": stage}},
             upsert=True,
         )
 
@@ -171,6 +230,7 @@ class DatabaseService:
         metadata.is_processing = data.get("is_processing", False)
         metadata.progress_done = int(data.get("progress_done", 0) or 0)
         metadata.progress_total = int(data.get("progress_total", 0) or 0)
+        metadata.stage = data.get("stage") or "papers"
 
         if metadata.is_processing and is_stale(
             data.get("processing_started_at"), datetime.now(timezone.utc)

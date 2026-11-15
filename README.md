@@ -45,7 +45,11 @@ PaperFlux fetches the most-upvoted Hugging Face Daily Papers and turns each one 
       E -->|Visual brief + writeup + PDF| I[Insights planner - Gemini chain / optional Groq]
       I -->|JSON plan| R[Visual renderer: layout + animation + GIF]
       I -->|Upsert| F[(MongoDB)]
+      F -->|Writeup + brief + pack| W[Podcast writer - Flash-Lite chain]
+      W -->|Two-host script| T[Gemini TTS - 1 multi-speaker call]
+      T -->|MP3| A2[(GridFS audio)]
       G[Streamlit UI] -->|Display| F
+      G -->|Listen| A2
       G --> R
 ```
 
@@ -62,6 +66,27 @@ What the renderer can show:
 - **Charts**: `bar`, `line`, and `scatter` (cost vs quality, log axis for wide ranges), with the paper's method drawn in the accent colour (`highlight`) and baselines in grey.
 
 Every flow, token animation and chart has a **Make GIF** button. Chart GIFs reveal the baselines first, then the paper's method, then the gap to the best baseline (only when the y-axis label says which direction is better). Drawing is deterministic Pillow (`visuals/raster.py`), so GIFs need no browser.
+
+## Podcasts
+
+For the top papers, two calm hosts (Maya and Theo by default) talk the paper through in about 5 minutes: the hook, the problem, the idea, the running example, the evidence, the catch, and a takeaway. Both ask and both explain. A **Listen** panel on the paper page plays the episode, shows the transcript, and offers the MP3; the feed marks those papers with a Podcast badge.
+
+How it is produced, after all of the day's analyses are stored (so podcasts never delay them):
+
+1. **Script** (`agents/paper_podcast`): a text model writes JSON turns from the analyst writeup, its Visual Brief and the insights pack (no PDF, Flash-Lite first). `podcast/script.py` makes every line speakable (no markdown, LaTeX, URLs or stage directions), caps the length, and gives one repair pass. The script is stored before recording.
+2. **Audio**: one multi-speaker Gemini TTS request per episode, with a calm delivery direction and two prebuilt voices (`Vindemiatrix`, "Gentle"; `Algieba`, "Smooth").
+3. **Storage**: PCM is encoded to 64 kbps MP3 (`lameenc`, ~0.5 MB per minute) and kept in a GridFS bucket, outside the paper documents; it is pruned with its paper.
+
+Free-tier TTS allows about 3 requests/min and 10/day, and failed requests count, so `services/podcast_producer.py`:
+
+- claims each TTS request from a per-day counter in MongoDB (quota day = Pacific date) before making it, so restarts and manual runs share `PAPERFLUX_PODCASTS_PER_DAY` (default 10);
+- does not write a script when today's budget is already spent;
+- stops at a daily-quota error and leaves the rest pending (scripts are reused, never rewritten);
+- rejects audio that is far shorter than its script (a cut-off reply), and gives up on a paper after 2 failed attempts.
+
+Podcasts need their own key, `GEMINI_PODCAST_API_KEY`, from a **new Google Cloud project**, and stay off without one: they never borrow the analyst/insights keys, whose quota the daily papers need (a warning is logged if the same key is reused). That one key covers the script writer and TTS, which are separate quota buckets; `GEMINI_TTS_API_KEY` optionally gives TTS a project of its own.
+
+Check the real setup once with `python tests/podcast_tts_check.py` (one TTS request, no database). Turn podcasts off with `PAPERFLUX_PODCASTS=0`.
 
 ## Free-tier budgeting (Gemini)
 
@@ -82,7 +107,8 @@ Extra API keys only add capacity if they belong to **different projects**.
 4. **Analyst agent**: layered explanation from the native PDF, plus a Visual Brief for the planner
 5. **Insights planner**: structured plan; one automatic repair pass if the plan is unusable
 6. **Storage**: each paper is upserted as it finishes; old papers are pruned only after new ones exist
-7. **UI**: Overview (TL;DR, core concept, numbers), Insights & Diagrams, Detailed Analysis, Abstract
+7. **Podcasts**: scripts and audio for the top papers, within the daily TTS budget
+8. **UI**: Abstract, Overview (TL;DR, core concept, numbers), Insights & Diagrams, Detailed Analysis, plus a Listen panel
 
 ## Installation
 

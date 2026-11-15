@@ -1,6 +1,6 @@
 """A single paper: header, actions, and one lazily-rendered view at a time."""
 import logging
-from typing import Any
+from typing import Any, Callable, Optional
 
 import streamlit as st
 
@@ -19,11 +19,17 @@ from paperflux.src.ui.content import (
 )
 from paperflux.src.ui.nav import current_view, goto, set_view, view_selector
 from paperflux.src.ui.paper_view import render_insights, render_overview
+from paperflux.src.ui.podcast import render_podcast
 
 logger = logging.getLogger("paperflux.ui.detail")
 
 
-def render_detail(paper: dict[str, Any], papers: list[dict[str, Any]], base_url: str = "") -> None:
+def render_detail(
+    paper: dict[str, Any],
+    papers: list[dict[str, Any]],
+    base_url: str = "",
+    load_audio: Optional[Callable[[str], Optional[bytes]]] = None,
+) -> None:
     pid = paper["paper_id"]
     prev_id, next_id, position, total = neighbors(papers, pid)
 
@@ -42,6 +48,7 @@ def render_detail(paper: dict[str, Any], papers: list[dict[str, Any]], base_url:
     st.caption(" · ".join(m for m in meta if m))
 
     _action_row(paper, base_url)
+    render_podcast(paper, load_audio)
     view = view_selector(pid)
 
     try:

@@ -24,6 +24,13 @@ class DeployConsistencyTest(unittest.TestCase):
         pinned = re.search(r"^streamlit==([\d.]+)", (ROOT / "requirements.txt").read_text(), re.M).group(1)
         self.assertEqual(locked, pinned, "regenerate requirements.txt: poetry export --only main --without-hashes")
 
+    def test_runtime_deps_pinned_in_requirements_match_the_lock(self):
+        lock = (ROOT / "poetry.lock").read_text(encoding="utf-8")
+        reqs = (ROOT / "requirements.txt").read_text()
+        for name in ("lameenc", "pillow", "httpx", "pymongo"):
+            locked = re.search(rf'name = "{name}"\nversion = "([^"]+)"', lock).group(1)
+            self.assertRegex(reqs, rf"(?m)^{name}=={re.escape(locked)} ", f"{name} in requirements.txt must match poetry.lock")
+
     def test_requirements_has_runtime_deps_only(self):
         text = (ROOT / "requirements.txt").read_text()
         for dev in ("ruff==", "black==", "flake8==", "google-generativeai=="):

@@ -60,6 +60,7 @@ class ProcessingMetadata:
         self.has_run = False  # False until papers were processed at least once
         self.progress_done = 0
         self.progress_total = 0
+        self.stage = "papers"  # or "podcasts" once the paper analyses are done
 
     def to_dict(self) -> Dict:
         return {

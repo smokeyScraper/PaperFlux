@@ -178,6 +178,16 @@ class GeminiClient:
             max_output_tokens=max_output_tokens,
         )
 
+    def generate_speech(self, prompt: str, speakers: Sequence[tuple[str, str]]) -> tuple[bytes, int]:
+        """Multi-speaker TTS. ``speakers`` are (name in the transcript, prebuilt voice).
+        Returns (16-bit mono PCM, sample rate)."""
+        return self._run(
+            lambda key: ([{"text": prompt}], None),
+            needs_pdf=False,
+            schema_capable=False,
+            invoke=lambda key, model, parts, _: self._call_speech(key, model, parts, speakers),
+        )
+
     def generate_from_pdf(
         self,
         pdf_path: str,
@@ -256,6 +266,24 @@ class GeminiClient:
         response_schema: Optional[dict[str, Any]],
         max_output_tokens: int,
     ) -> str:
+        return self._run(
+            parts_factory,
+            needs_pdf=needs_pdf,
+            schema_capable=response_schema is not None,
+            invoke=lambda key, model, parts, use_schema: self._call(
+                key, model, parts, system_instruction, temperature,
+                response_schema if use_schema else None, response_schema, max_output_tokens,
+            ),
+        )
+
+    def _run(
+        self,
+        parts_factory: Callable[[str], tuple[list[dict[str, Any]], Optional[Callable[[], None]]]],
+        needs_pdf: bool,
+        schema_capable: bool,
+        invoke: Callable[[str, str, list[dict[str, Any]], bool], Any],
+    ) -> Any:
+        """Model chain x key rotation with rate limiting and quota bookkeeping."""
         quota_hits = 0
         hard_error: Optional[Exception] = None
         eligible = 0
@@ -267,7 +295,7 @@ class GeminiClient:
                 if model in _dead_models:
                     continue
             eligible += 1
-            use_schema = response_schema is not None
+            use_schema = schema_capable
             model_dead = False
 
             for key in self._keys_rotated():
@@ -280,11 +308,7 @@ class GeminiClient:
                     self._limiter(kid, model).acquire()
                     parts, cleanup = parts_factory(key)
                     try:
-                        return self._call(
-                            key, model, parts, system_instruction, temperature,
-                            response_schema if use_schema else None,
-                            response_schema, max_output_tokens,
-                        )
+                        return invoke(key, model, parts, use_schema)
                     except GeminiError as exc:
                         status = exc.status_code
                         if status == 429:
@@ -388,20 +412,7 @@ class GeminiClient:
             else:
                 payload["systemInstruction"] = {"parts": [{"text": system}]}
 
-        url = f"{GEMINI_API_BASE}/models/{model}:generateContent"
-        try:
-            with httpx.Client(timeout=self.timeout_seconds, transport=self._transport) as client:
-                response = client.post(url, headers={"x-goog-api-key": api_key}, json=payload)
-        except httpx.TransportError as exc:
-            raise GeminiError(f"network error: {type(exc).__name__}: {exc}") from exc
-
-        if response.status_code >= 400:
-            raise GeminiError(
-                f"generateContent HTTP {response.status_code}: {response.text[:800]}",
-                status_code=response.status_code,
-            )
-
-        data = response.json()
+        data = self._post(api_key, model, payload)
         text = _extract_text(data)
         candidate = (data.get("candidates") or [{}])[0]
         finish = candidate.get("finishReason")
@@ -413,6 +424,45 @@ class GeminiClient:
         if finish == "MAX_TOKENS" and schema_requested is not None:
             raise GeminiError(f"Structured output was truncated by maxOutputTokens on {model}")
         return text
+
+    def _call_speech(
+        self, api_key: str, model: str, parts: list[dict[str, Any]], speakers: Sequence[tuple[str, str]]
+    ) -> tuple[bytes, int]:
+        voices = [
+            {"speaker": name, "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}
+            for name, voice in speakers
+        ]
+        payload = {
+            "contents": [{"role": "user", "parts": parts}],
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": {"multiSpeakerVoiceConfig": {"speakerVoiceConfigs": voices}},
+            },
+        }
+        data = self._post(api_key, model, payload)
+        audio = _extract_audio(data)
+        if audio is None:
+            finish = ((data.get("candidates") or [{}])[0]).get("finishReason")
+            raise GeminiError(f"TTS returned no audio on {model} (finishReason={finish})")
+        pcm, mime = audio
+        if "pcm" not in mime.lower() and "l16" not in mime.lower():
+            raise GeminiError(f"TTS returned an unexpected audio format: {mime}")
+        rate = re.search(r"rate=(\d+)", mime)
+        return pcm, int(rate.group(1)) if rate else 24000
+
+    def _post(self, api_key: str, model: str, payload: dict[str, Any]) -> dict[str, Any]:
+        url = f"{GEMINI_API_BASE}/models/{model}:generateContent"
+        try:
+            with httpx.Client(timeout=self.timeout_seconds, transport=self._transport) as client:
+                response = client.post(url, headers={"x-goog-api-key": api_key}, json=payload)
+        except httpx.TransportError as exc:
+            raise GeminiError(f"network error: {type(exc).__name__}: {exc}") from exc
+        if response.status_code >= 400:
+            raise GeminiError(
+                f"generateContent HTTP {response.status_code}: {response.text[:800]}",
+                status_code=response.status_code,
+            )
+        return response.json()
 
     # ---- Files API (only for PDFs over the inline limit) --------------------
     def _upload_file(self, api_key: str, pdf_path: str, pdf_bytes: bytes) -> tuple[str, str]:
@@ -471,6 +521,20 @@ def _model_unavailable(message: str) -> bool:
 
 def _schema_rejected(message: str) -> bool:
     return bool(re.search(r"schema|constraint|too many states|response_mime_type|responseMimeType", message, re.I))
+
+
+def _extract_audio(payload: dict[str, Any]) -> Optional[tuple[bytes, str]]:
+    """Concatenate every inline audio part (long replies may be split)."""
+    chunks: list[bytes] = []
+    mime = ""
+    for candidate in payload.get("candidates") or []:
+        for part in (candidate.get("content") or {}).get("parts") or []:
+            inline = part.get("inlineData") or part.get("inline_data") or {}
+            kind = inline.get("mimeType") or inline.get("mime_type") or ""
+            if inline.get("data") and kind.lower().startswith("audio/"):
+                chunks.append(base64.b64decode(inline["data"]))
+                mime = mime or kind
+    return (b"".join(chunks), mime) if chunks else None
 
 
 def _extract_text(payload: dict[str, Any]) -> str:

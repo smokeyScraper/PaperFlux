@@ -38,6 +38,17 @@ def next_scheduled_run(now: datetime, last_processed: Optional[datetime] = None)
     return candidate
 
 
+def quota_day(now: Optional[datetime] = None) -> str:
+    """The free-tier quota day (YYYY-MM-DD): Gemini daily limits reset at midnight Pacific."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/Los_Angeles")
+    except Exception:  # tzdata missing -> PST is the safe approximation
+        tz = timezone(timedelta(hours=-8))
+    return _aware(now or datetime.now(timezone.utc)).astimezone(tz).date().isoformat()
+
+
 def is_stale(started_at: Optional[datetime], now: datetime) -> bool:
     """A processing flag older than this belongs to a run that died (Space restart)."""
     if started_at is None:

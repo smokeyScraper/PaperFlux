@@ -40,11 +40,13 @@ turns each one into something you can understand in a couple of minutes.
 - A TL;DR, the core idea, and the headline numbers
 - Step-by-step animated diagrams (export any of them as a GIF) and charts built from the paper's own results
 - A layered written analysis: how it works, the math in plain words, the evidence, and where to be skeptical
+- For the top papers, a calm 5-minute audio conversation between two hosts, with a transcript
 
 **How it works**
 1. Papers are fetched from Hugging Face and the PDFs from arXiv.
 2. An analyst model reads each PDF; a second model plans the diagrams and charts.
 3. Our own renderer draws them, so figures stay clean and consistent.
+4. A writer turns the analysis into a two-host script, and Gemini's text-to-speech records it.
 
 Built with Streamlit, MongoDB and Google Gemini's free tier.
 """
@@ -104,7 +106,7 @@ if selected_id and paper is None:
     st.button("Show today's papers", on_click=goto)
 
 if paper is not None:
-    render_detail(paper, papers, _base_url())
+    render_detail(paper, papers, _base_url(), load_audio=db.get_podcast_audio)
 elif not papers:
     render_empty(meta.is_processing, next_update_text(meta))
 else:

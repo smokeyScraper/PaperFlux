@@ -205,6 +205,10 @@ class AppSmokeTest(unittest.TestCase):
     def test_analysis_cites_figures_taken_from_the_paper(self):
         from paperflux.src.services import database
         paper = v3_paper()
+        paper["explanation"] = ANALYSIS.replace(
+            "## The Big Idea\nBecause Z.",
+            "## The Big Idea\nBecause Z. The architecture is in Fig. 1.",
+        )
         paper["figures"] = [{
             "label": "Figure 1", "caption": "Overview of the model architecture.",
             "page": 2, "file_id": "fig1",
@@ -218,7 +222,8 @@ class AppSmokeTest(unittest.TestCase):
             at = boot([paper], query={"paper": "2611.00001", "view": "analysis"})
         self.assert_healthy(at)
         shown = " ".join(texts(at.markdown) + texts(at.caption))
-        self.assertIn("Figures from the paper", shown)
+        self.assertNotIn("Figures from the paper", shown)
+        self.assertIn("The architecture is in Fig. 1.", shown)
         self.assertIn("Figure 1.", shown)
         self.assertIn("Overview of the model architecture.", shown)
         self.assertIn("From the paper, p. 2.", shown)

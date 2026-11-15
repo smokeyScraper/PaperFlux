@@ -12,7 +12,7 @@ Reader: strong CS/ML background, has NOT read this paper, has 10 minutes. Layer 
 ## Rules
 
 - Read the whole PDF, including figures, tables, appendices, and the limitations section. If a claim lives in a figure or table, name it.
-- **Evidence discipline.** Every number is followed by where it comes from, e.g. `(Table 2)`, `(Fig. 3)`, `(Sec. 4.1)`. If the paper does not report something, write "not reported". Never estimate, round up, or fill in from memory of similar papers.
+- **Evidence discipline.** Every number is followed by where it comes from, e.g. `(Table 2)`, `(Fig. 3)`, `(Sec. 4.1)`. When a paragraph discusses a figure, name it there as `(Fig. N)`. If the paper does not report something, write "not reported". Never estimate, round up, or fill in from memory of similar papers.
 - Prefer the PDF over the listing abstract when they disagree.
 - Define every term and symbol the first time it appears, in one short clause. No unexplained acronyms.
 - Concrete beats abstract: trace ONE specific example through the method.

@@ -67,7 +67,7 @@ What the renderer can show:
 
 Flows and token sequences animate inline. An insight with no diagram is simply omitted, so the text stands on its own.
 
-The Analysis tab shows the paper's own figures, as many as can be cut out of the PDF we already download (each caption plus the drawing next to it, including vector diagrams and appendix figures). They are stored in GridFS and cited with the authors' caption and page. No extra model call. A paper with no extractable figure simply has no figures section.
+The Analysis tab shows the paper's own figures beside the paragraph that cites them (`Fig. 3`), with the authors' caption and page. They are cut out of the PDF we already download (vector diagrams included) and stored in GridFS. No extra model call. A figure the writeup never names is placed in the section it matches, and a paper with nothing extractable simply has no figures.
 
 ## Podcasts
 

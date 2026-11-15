@@ -97,6 +97,40 @@ class MarkdownTest(unittest.TestCase):
     def test_no_headings_gives_no_sections(self):
         self.assertEqual(c.split_sections("just text"), [])
 
+    def test_a_cited_figure_follows_the_paragraph_that_names_it(self):
+        sections = [
+            ("How It Works", "The encoder is ordinary.\n\nFig. 1 shows the architecture. The decoder follows."),
+            ("What the Experiments Show", "Accuracy is in Fig. 2. A later note mentions Fig. 1 again."),
+        ]
+        figures = [
+            {"label": "Figure 1", "caption": "The architecture."},
+            {"label": "Figure 2", "caption": "Accuracy on three benchmarks."},
+            {"label": "Figure 1a", "caption": "A subfigure the text names separately."},
+        ]
+        woven = c.weave_figures(sections, figures)
+        how, experiments = woven
+        self.assertEqual(how[1][0], "The encoder is ordinary.")
+        self.assertEqual(how[1][1], "Fig. 1 shows the architecture. The decoder follows.")
+        self.assertEqual(how[1][2]["label"], "Figure 1")
+        self.assertEqual(experiments[1][1]["label"], "Figure 2")
+        shown = [block for block in how[1] + experiments[1] if isinstance(block, dict)]
+        self.assertEqual([block["label"] for block in shown if block["label"] == "Figure 1"], ["Figure 1"])
+
+    def test_an_unnamed_figure_lands_in_the_matching_section(self):
+        sections = [
+            ("How It Works", "Data flows through the encoder."),
+            ("What the Experiments Show", "The table lists accuracy."),
+            ("Glossary", "Encoder: the first module."),
+        ]
+        figures = [
+            {"label": "Figure 4", "caption": "Overview of the model architecture."},
+            {"label": "Figure 9", "caption": "Ablation accuracy against the baseline."},
+        ]
+        woven = dict(c.weave_figures(sections, figures))
+        self.assertEqual(woven["How It Works"][-1]["label"], "Figure 4")
+        self.assertEqual(woven["What the Experiments Show"][-1]["label"], "Figure 9")
+        self.assertTrue(all(isinstance(block, str) for block in woven["Glossary"]))
+
 
 class ScheduleRulesTest(unittest.TestCase):
     def dt(self, y, m, d, h=0):

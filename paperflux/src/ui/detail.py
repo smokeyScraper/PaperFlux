@@ -16,6 +16,7 @@ from paperflux.src.ui.content import (
     share_url,
     short_authors,
     split_sections,
+    weave_figures,
 )
 from paperflux.src.ui.nav import current_view, goto, set_view, view_selector
 from paperflux.src.ui.paper_view import render_insights, render_overview
@@ -145,41 +146,42 @@ def _render_analysis(paper: dict[str, Any], load_figure=None) -> None:
         st.caption(f"About {reading_minutes(explanation)} min read")
         sections = split_sections(explanation)
         if len(sections) < 2:
-            st.markdown(explanation)
-        elif st.toggle("Show all sections expanded", key=f"all-{pid}"):
-            for title, body in sections:
+            sections = [("", explanation)]
+        woven = weave_figures(sections, paper.get("figures") or [])
+        if len(sections) < 2 or (len(woven) == 1 and not woven[0][0]):
+            _render_blocks(woven[0][1], load_figure)
+            return
+        if st.toggle("Show all sections expanded", key=f"all-{pid}"):
+            for title, blocks in woven:
                 st.markdown(f"#### {title}")
-                st.markdown(body)
+                _render_blocks(blocks, load_figure)
         else:
-            for index, (title, body) in enumerate(sections):
+            for index, (title, blocks) in enumerate(woven):
                 with st.expander(title, expanded=index < 2):
-                    st.markdown(body)
-        _render_cited_figures(paper, load_figure)
+                    _render_blocks(blocks, load_figure)
 
 
-def _render_cited_figures(paper: dict[str, Any], load_figure) -> None:
-    """The authors' own figures. Nothing is said when the paper has none."""
-    figures = paper.get("figures") or []
-    if not figures or load_figure is None:
+def _render_blocks(blocks: list, load_figure) -> None:
+    for block in blocks:
+        if isinstance(block, str):
+            st.markdown(block)
+        else:
+            _render_figure(block, load_figure)
+
+
+def _render_figure(fig: dict[str, Any], load_figure) -> None:
+    """One of the authors' figures, under the paragraph that discusses it."""
+    if load_figure is None:
         return
-    loaded = []
-    for fig in figures:
-        data = _figure_bytes(str(fig.get("file_id") or ""), load_figure)
-        if data:
-            loaded.append((fig, data))
-    if not loaded:
+    data = _figure_bytes(str(fig.get("file_id") or ""), load_figure)
+    if not data:
         return
-    st.divider()
-    st.markdown("#### Figures from the paper")
-    st.caption("The authors' own figures, with the captions from the paper.")
-    for fig, data in loaded:
-        st.image(data, width="stretch")
-        label = fig.get("label") or "Figure"
-        caption = (fig.get("caption") or "").strip()
-        cite = f"**{label}.** {caption}" if caption else f"**{label}.**"
-        page = fig.get("page")
-        st.markdown(cite)
-        st.caption(f"From the paper, p. {page}." if page else "From the paper.")
+    st.image(data, width="stretch")
+    label = fig.get("label") or "Figure"
+    caption = (fig.get("caption") or "").strip()
+    st.markdown(f"**{label}.** {caption}" if caption else f"**{label}.**")
+    page = fig.get("page")
+    st.caption(f"From the paper, p. {page}." if page else "From the paper.")
 
 
 __all__ = ["render_detail", "VIEW_LABELS"]

@@ -90,6 +90,96 @@ def split_sections(markdown: str) -> list[tuple[str, str]]:
     return [(title, "\n".join(body).strip()) for title, body in sections if "\n".join(body).strip()]
 
 
+_FIG_REF = re.compile(r"\b(?:figure|fig\.?)\s*(\d+)\s*([a-z])?\b", re.IGNORECASE)
+_WORD = re.compile(r"[a-z]{4,}")
+_STOP = frozenset(
+    "this that these those with from into over their paper figure shown using used than then "
+    "each both only more most such also onto about when where what which into".split()
+)
+_RESULTS = re.compile(r"result|accurac|ablation|benchmark|compar", re.IGNORECASE)
+_METHOD = re.compile(r"architect|overview|pipeline|method|model|diagram|system", re.IGNORECASE)
+
+
+def figure_key(label: str) -> Optional[tuple[int, str]]:
+    """(number, suffix) for 'Figure 3' or 'Fig. 1a'. None when the label is not a figure."""
+    match = _FIG_REF.search(label or "")
+    if not match:
+        return None
+    return int(match.group(1)), (match.group(2) or "").lower()
+
+
+def weave_figures(sections: list[tuple[str, str]], figures: list[dict[str, Any]]) -> list[tuple[str, list]]:
+    """Put each figure after the paragraph that first cites it.
+
+    A figure the writeup never names is attached to the section whose words match its
+    caption, or to How It Works / the experiments section when the caption says which
+    kind of diagram it is. Each figure appears once.
+    """
+    by_key: dict[tuple[int, str], dict[str, Any]] = {}
+    for fig in figures or []:
+        key = figure_key(str(fig.get("label") or ""))
+        if key is not None and key not in by_key:
+            by_key[key] = fig
+
+    used: set[tuple[int, str]] = set()
+    woven: list[tuple[str, list]] = []
+    for title, body in sections:
+        blocks: list = []
+        body_keys = set(_figure_refs(body))
+        for key in _figure_refs(title):
+            if key in by_key and key not in used and key not in body_keys:
+                blocks.append(by_key[key])
+                used.add(key)
+        for paragraph in _paragraphs(body):
+            blocks.append(paragraph)
+            for key in _figure_refs(paragraph):
+                if key in by_key and key not in used:
+                    blocks.append(by_key[key])
+                    used.add(key)
+        woven.append((title, blocks))
+
+    leftover = [fig for key, fig in by_key.items() if key not in used]
+    for fig in sorted(leftover, key=lambda item: figure_key(str(item.get("label") or "")) or (0, "")):
+        if woven:
+            woven[_best_section(woven, fig)][1].append(fig)
+    return woven
+
+
+def _paragraphs(body: str) -> list[str]:
+    return [part.strip() for part in re.split(r"\n\s*\n", (body or "").strip()) if part.strip()]
+
+
+def _figure_refs(text: str) -> list[tuple[int, str]]:
+    return [(int(match.group(1)), (match.group(2) or "").lower()) for match in _FIG_REF.finditer(text or "")]
+
+
+def _words(text: str) -> set[str]:
+    return {word for word in _WORD.findall((text or "").lower()) if word not in _STOP}
+
+
+def _best_section(woven: list[tuple[str, list]], fig: dict[str, Any]) -> int:
+    caption = str(fig.get("caption") or "")
+    wanted = _words(caption)
+    best_index, best_score = 0, 0
+    for index, (title, blocks) in enumerate(woven):
+        text = title + " " + " ".join(block for block in blocks if isinstance(block, str))
+        score = len(wanted & _words(text))
+        if score > best_score:
+            best_index, best_score = index, score
+    if best_score >= 2:
+        return best_index
+    titles = [title for title, _ in woven]
+    preferred = _RESULTS if _RESULTS.search(caption) else _METHOD
+    heading = re.compile(r"experiment", re.I) if preferred is _RESULTS else re.compile(r"how it works", re.I)
+    for index, title in enumerate(titles):
+        if heading.search(title):
+            return index
+    for index, title in enumerate(titles):
+        if not re.search(r"glossary|could build|skeptic", title, re.I):
+            best_index = index
+    return best_index
+
+
 def find_section(markdown: str, name: str) -> str:
     wanted = name.lower()
     for title, body in split_sections(markdown):

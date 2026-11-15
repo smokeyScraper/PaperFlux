@@ -28,7 +28,7 @@ from paperflux.src.ui.detail import render_detail  # noqa: E402
 from paperflux.src.ui.feed import render_empty, render_feed  # noqa: E402
 from paperflux.src.ui.nav import goto  # noqa: E402
 from paperflux.src.ui.status import next_update_text, render_status  # noqa: E402
-from paperflux.src.ui.theme import theme_toggle  # noqa: E402
+from paperflux.src.ui.theme import apply_theme_switch, theme_toggle  # noqa: E402
 
 os.makedirs(TEMP_DIR, exist_ok=True)
 
@@ -94,6 +94,7 @@ with st.container(horizontal=True, horizontal_alignment="distribute", vertical_a
         st.title("📚 PaperFlux")
         st.caption("Today's most-upvoted AI papers, explained with animated diagrams.")
     theme_toggle()
+apply_theme_switch()
 
 selected_id = st.query_params.get("paper")
 paper = next((p for p in papers if p["paper_id"] == selected_id), None) if selected_id else None

@@ -11,6 +11,7 @@ LIGHT, DARK = "light", "dark"
 # Must match Streamlit's frontend key `stActiveTheme-<pathname>-v<N>`, whose stored value is
 # "Light", "Dark" or "System". Checked against the installed bundle in tests/test_theme.py.
 STORAGE_VERSION = 2
+_PENDING = "_paperflux_switch_theme"
 
 
 def current_theme() -> str:
@@ -36,6 +37,8 @@ def switch_script() -> str:
 
 
 def theme_toggle() -> None:
+    """The button only. The reload script is emitted by ``apply_theme_switch``, outside the header
+    row: injected here it becomes an extra flex item and shoves the button left until the reload."""
     dark = current_theme() == DARK
     if st.button(
         "Light mode" if dark else "Dark mode",
@@ -43,4 +46,16 @@ def theme_toggle() -> None:
         icon=":material/light_mode:" if dark else ":material/dark_mode:",
         help="Switch between light and dark theme",
     ):
-        st.html(switch_script(), unsafe_allow_javascript=True)
+        st.session_state[_PENDING] = True
+
+
+def apply_theme_switch() -> None:
+    """Emit the reload script below the header, in a container the script itself hides."""
+    if not st.session_state.pop(_PENDING, False):
+        return
+    st.html(
+        "<style>[data-testid='stElementContainer']:has(#paperflux-theme-switch){display:none !important}</style>"
+        '<div id="paperflux-theme-switch" hidden></div>'
+        + switch_script(),
+        unsafe_allow_javascript=True,
+    )

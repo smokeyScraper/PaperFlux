@@ -130,6 +130,9 @@ class AppSmokeTest(unittest.TestCase):
         script = " ".join(h.proto.body for h in at.get("html"))
         self.assertIn("stActiveTheme-", script)
         self.assertIn("location.reload()", script)
+        # The script must not be a sibling of the toggle: that flex item is what shoved it left.
+        self.assertIn("paperflux-theme-switch", script)
+        self.assertIn("display:none", script)
 
     def test_view_param_selects_the_tab_and_renders_only_that_view(self):
         at = boot([v3_paper()], query={"paper": "2611.00001", "view": "insights"})

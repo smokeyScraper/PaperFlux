@@ -17,6 +17,7 @@ class Paper:
         media_urls: Optional[List[str]] = None,
         github_repo: Optional[str] = None,
         project_page: Optional[str] = None,
+        visual_brief: str = "",
     ):
         self.paper_id = paper_id
         self.title = title
@@ -30,6 +31,7 @@ class Paper:
         self.media_urls = media_urls or []
         self.github_repo = github_repo
         self.project_page = project_page
+        self.visual_brief = visual_brief
         self.processed_at = datetime.now(timezone.utc)
 
     def to_dict(self) -> Dict:
@@ -46,6 +48,7 @@ class Paper:
             "media_urls": self.media_urls,
             "github_repo": self.github_repo,
             "project_page": self.project_page,
+            "visual_brief": self.visual_brief,
             "processed_at": self.processed_at,
         }
 

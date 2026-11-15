@@ -1,25 +1,27 @@
 """Export a flow diagram as a looping GIF (shareable "explainer" animation).
 
 Uses the same ``Layout`` as the inline animated SVG, drawn frame-by-frame with
-Pillow (no browser, no system dependencies). Supersampled 2x for smooth edges.
+Pillow (see ``raster.py``).
 """
 from __future__ import annotations
 
-import io
-from functools import lru_cache
 from typing import Optional
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 from paperflux.src.visuals.flow import (
     ACCENT,
     BACK_EDGE_COLOR,
     CARD_FILL,
     CARD_STROKE,
+    CHIP_FILL,
     DETAIL_SIZE,
     EDGE_COLOR,
+    EXAMPLE_SIZE,
     KIND_COLORS,
     LABEL_SIZE,
+    NOVEL_TAG,
+    PACKET_R,
     PAD,
     TEXT_DARK,
     TEXT_MUTED,
@@ -28,106 +30,19 @@ from paperflux.src.visuals.flow import (
     Layout,
     layout_flow,
 )
+from paperflux.src.visuals.raster import MAX_WIDTH, SCALE, encode_gif
+from paperflux.src.visuals.raster import drawable as _drawable
+from paperflux.src.visuals.raster import font as _font
+from paperflux.src.visuals.raster import mix as _mix
+from paperflux.src.visuals.raster import partial as _partial
+from paperflux.src.visuals.raster import rgb as _rgb
+from paperflux.src.visuals.raster import text as _text
 
-SCALE = 2
-DRAW_FRAMES = 6
-DRAW_FRAME_MS = 70
-HOLD_MS = 1100
+DRAW_FRAMES = 8
+DRAW_FRAME_MS = 75
+HOLD_MS = 1900
 FINAL_HOLD_MS = 2600
-MAX_WIDTH = 900
 DIM = 0.22
-
-
-def _rgb(hex_color: str) -> tuple[int, int, int]:
-    h = hex_color.lstrip("#")
-    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-
-
-def _mix(fg: str, bg: str, alpha: float) -> tuple[int, int, int]:
-    a = max(0.0, min(1.0, alpha))
-    f, b = _rgb(fg), _rgb(bg)
-    return tuple(int(round(b[i] + (f[i] - b[i]) * a)) for i in range(3))  # type: ignore[return-value]
-
-
-@lru_cache(maxsize=16)
-def _font(size: int) -> ImageFont.FreeTypeFont:
-    return ImageFont.load_default(size=size)
-
-
-_ASCII_FALLBACK = {
-    "×": "x", "·": ".", "…": "...", "–": "-", "—": "-", "−": "-", "’": "'", "‘": "'",
-    "“": '"', "”": '"', "≥": ">=", "≤": "<=", "→": "->", "←": "<-", "↔": "<->",
-    "≈": "~", "≠": "!=", "±": "+/-", "∞": "inf", "°": "deg", "µ": "u", "μ": "u",
-    "α": "alpha", "β": "beta", "γ": "gamma", "δ": "delta", "θ": "theta", "λ": "lambda",
-    "σ": "sigma", "π": "pi", "ε": "eps", "∑": "sum", "∏": "prod", "√": "sqrt",
-    "\u00a0": " ", "\u2009": " ", "\u200b": "",
-}
-
-
-def _glyph_bytes(font: ImageFont.FreeTypeFont, ch: str, size: int) -> bytes:
-    canvas = Image.new("L", (size * 2, size * 2), 0)
-    ImageDraw.Draw(canvas).text((2, 2), ch, font=font, fill=255)
-    return canvas.tobytes()
-
-
-@lru_cache(maxsize=4096)
-def _glyph_ok(size: int, ch: str) -> bool:
-    if ch.isspace():
-        return True
-    font = _font(size)
-    # U+FFFE is a non-character, so it renders as the font's .notdef (tofu) glyph.
-    return _glyph_bytes(font, ch, size) != _glyph_bytes(font, "\ufffe", size)
-
-
-def _drawable(text: str, size: int) -> str:
-    """Map symbols the bundled font lacks to ASCII (avoids tofu boxes in the GIF)."""
-    out: list[str] = []
-    for ch in text:
-        if _glyph_ok(size, ch):
-            out.append(ch)
-        else:
-            out.append(_ASCII_FALLBACK.get(ch, ""))
-    return "".join(out)
-
-
-def _text(
-    draw: ImageDraw.ImageDraw,
-    xy: tuple[float, float],
-    text: str,
-    size: float,
-    fill: tuple[int, int, int],
-    anchor: str = "ms",
-    bold: bool = False,
-) -> None:
-    px = max(8, int(round(size * SCALE)))
-    font = _font(px)
-    text = _drawable(text, px)
-    x, y = xy[0] * SCALE, xy[1] * SCALE
-    draw.text((x, y), text, font=font, fill=fill, anchor=anchor)
-    if bold:  # the bundled font has a single weight: fake bold with a 1px smear
-        draw.text((x + 1, y), text, font=font, fill=fill, anchor=anchor)
-
-
-def _partial(points: list[tuple[float, float]], fraction: float) -> list[tuple[float, float]]:
-    if fraction >= 1.0:
-        return points
-    lengths = [
-        ((points[i + 1][0] - points[i][0]) ** 2 + (points[i + 1][1] - points[i][1]) ** 2) ** 0.5
-        for i in range(len(points) - 1)
-    ]
-    target = sum(lengths) * max(0.0, fraction)
-    out = [points[0]]
-    run = 0.0
-    for i, seg in enumerate(lengths):
-        if run + seg >= target:
-            t = 0.0 if seg == 0 else (target - run) / seg
-            x = points[i][0] + (points[i + 1][0] - points[i][0]) * t
-            y = points[i][1] + (points[i + 1][1] - points[i][1]) * t
-            out.append((x, y))
-            return out
-        run += seg
-        out.append(points[i + 1])
-    return out
 
 
 def draw_frame(layout: Layout, step: int, progress: float) -> Image.Image:
@@ -169,6 +84,7 @@ def draw_frame(layout: Layout, step: int, progress: float) -> Image.Image:
             return progress
         return 0.0
 
+    packets: list[tuple[float, float]] = []
     for g in layout.edges:
         frac = edge_fraction(g)
         if frac <= 0:
@@ -177,6 +93,8 @@ def draw_frame(layout: Layout, step: int, progress: float) -> Image.Image:
         pts = [P(x, y) for x, y in _partial(g.polyline(14), frac)]
         if len(pts) >= 2:
             d.line(pts, fill=color, width=2 * SCALE, joint="curve")
+        if frac < 0.999:
+            packets.append(pts[-1])
         if frac >= 0.999:
             d.polygon([P(x, y) for x, y in g.arrow], fill=color)
             if g.edge.label:
@@ -190,10 +108,25 @@ def draw_frame(layout: Layout, step: int, progress: float) -> Image.Image:
                 )
                 _text(d, (lx + ox, ly + oy), g.edge.label, 11, _rgb(TEXT_MUTED))
 
+    r = PACKET_R * SCALE
+    for px, py in packets:
+        d.ellipse((px - r - 2 * SCALE, py - r - 2 * SCALE, px + r + 2 * SCALE, py + r + 2 * SCALE),
+                  fill=(255, 255, 255))
+        d.ellipse((px - r, py - r, px + r, py + r), fill=_rgb(ACCENT))
+
     for p in layout.placed.values():
         s = layout.node_step[p.node.id]
         alpha = 1.0 if s < step else (DIM + (1 - DIM) * progress if s == step else DIM)
+        arrived = s < step or (s == step and progress >= 0.999)
         fill, stroke = KIND_COLORS[p.node.kind]
+        if p.node.novel:
+            d.rounded_rectangle(
+                (*P(p.x - 4, p.y - 4), *P(p.x + p.w + 4, p.y + p.h + 4)),
+                radius=13 * SCALE,
+                outline=_mix(ACCENT, CARD_FILL, 0.28 * alpha),
+                width=3 * SCALE,
+            )
+            stroke = ACCENT
         width = (4 - 2.4 * progress) if (s == step and progress < 1.0) else 1.6
         d.rounded_rectangle(
             (*P(p.x, p.y), *P(p.x + p.w, p.y + p.h)),
@@ -211,6 +144,20 @@ def draw_frame(layout: Layout, step: int, progress: float) -> Image.Image:
                 _mix(TEXT_DARK if is_label else TEXT_MUTED, CARD_FILL, alpha),
                 bold=is_label,
             )
+        tag = p.novel_tag()
+        if tag:
+            tx, ty, tw, th = tag
+            d.rounded_rectangle((*P(tx, ty), *P(tx + tw, ty + th)), radius=th / 2 * SCALE,
+                                fill=_mix(ACCENT, CARD_FILL, alpha))
+            _text(d, (tx + tw / 2 + ox, ty + th - 4 + oy), NOVEL_TAG[0], NOVEL_TAG[1],
+                  _mix("#ffffff", ACCENT, alpha), bold=True)
+        box = p.example_box()
+        if box and arrived:
+            bx, by, bw, bh = box
+            d.rounded_rectangle((*P(bx, by), *P(bx + bw, by + bh)), radius=6 * SCALE,
+                                fill=_rgb(CHIP_FILL), outline=_mix(stroke, CHIP_FILL, 0.45), width=SCALE)
+            for text, ty in p.example_rows():
+                _text(d, (p.cx + ox, ty + oy), text, EXAMPLE_SIZE, _rgb(TEXT_DARK))
 
     if spec.steps:
         step_obj = spec.steps[min(step, len(spec.steps) - 1)]
@@ -230,15 +177,6 @@ def draw_frame(layout: Layout, step: int, progress: float) -> Image.Image:
     return img.resize((out_w, out_h), Image.Resampling.LANCZOS)
 
 
-def _shared_palette(frames: list[Image.Image]) -> Image.Image:
-    picks = frames[:: max(1, len(frames) // 6)] + [frames[-1]]
-    w, h = picks[0].size
-    montage = Image.new("RGB", (w, h * len(picks)))
-    for i, frame in enumerate(picks):
-        montage.paste(frame, (0, i * h))
-    return montage.quantize(colors=128, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
-
-
 def render_gif(layout: Layout) -> bytes:
     frames: list[Image.Image] = []
     durations: list[int] = []
@@ -248,19 +186,7 @@ def render_gif(layout: Layout) -> bytes:
             frames.append(draw_frame(layout, k, i / DRAW_FRAMES))
             durations.append(DRAW_FRAME_MS)
         durations[-1] = FINAL_HOLD_MS if k == n - 1 else HOLD_MS
-    palette = _shared_palette(frames)
-    quantised = [f.quantize(palette=palette, dither=Image.Dither.NONE) for f in frames]
-    buf = io.BytesIO()
-    quantised[0].save(
-        buf,
-        format="GIF",
-        save_all=True,
-        append_images=quantised[1:],
-        duration=durations,
-        loop=0,
-        disposal=1,
-    )
-    return buf.getvalue()
+    return encode_gif(frames, durations)
 
 
 def flow_to_gif(raw_or_spec) -> Optional[bytes]:

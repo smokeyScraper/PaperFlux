@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from paperflux.src.agents.llm_errors import QuotaExhaustedError
 from paperflux.src.agents.paper_analyst.agent import PaperAnalystAgent
+from paperflux.src.agents.paper_analyst.brief import split_visual_brief
 from paperflux.src.agents.paper_insights.agent import PaperInsightsAgent
 from paperflux.src.config.settings import MAX_PAPER_WORKERS, MAX_PAPERS
 from paperflux.src.services.database import DatabaseService, paper_is_complete
@@ -93,11 +94,14 @@ class PaperProcessor:
                 return QUOTA
 
             explanation = (existing or {}).get("explanation")
+            visual_brief = (existing or {}).get("visual_brief") or ""
             if not explanation:
                 logger.info("Analyst agent starting for %s", paper_id)
                 explanation = self.analyst.run(
                     pdf_path=pdf_path, title=title, summary=summary, paper_id=paper_id
                 )
+            explanation, fresh_brief = split_visual_brief(explanation)
+            visual_brief = fresh_brief or visual_brief
 
             insights = {"insights": []}
             quota_hit = False
@@ -109,6 +113,7 @@ class PaperProcessor:
                     title=title,
                     paper_id=paper_id,
                     abstract=summary,
+                    visual_brief=visual_brief,
                 )
             except QuotaExhaustedError as e:
                 quota_hit = True
@@ -121,6 +126,7 @@ class PaperProcessor:
 
             paper_obj = self.fetcher.parse_paper_data(paper_entry)
             paper_obj.explanation = explanation
+            paper_obj.visual_brief = visual_brief
             paper_obj.insights = insights
             logger.info("Storing paper %s", paper_id)
             self.db.upsert_paper(paper_obj)

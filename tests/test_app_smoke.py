@@ -16,6 +16,9 @@ FLOW = {"type": "flow", "title": "How it works",
                  "steps": [{"caption": "Data goes in", "nodes": ["a"]}, {"caption": "Model runs", "nodes": ["b", "c"]}]}}
 CHART = {"type": "chart", "caption": "Table 2",
          "spec": {"kind": "bar", "title": "Accuracy", "series": [{"name": "Ours", "points": [{"label": "A", "value": 9}, {"label": "B", "value": 7}]}]}}
+TOKENS = {"type": "tokens", "title": "Draft and verify", "tokens": ["The", {"text": "fox", "state": "hidden"}],
+          "steps": [{"caption": "Draft", "changes": [{"index": 1, "state": "new"}]},
+                    {"caption": "Verify", "changes": [{"index": 1, "state": "keep"}]}]}
 ANALYSIS = "# T\n\n## TL;DR\n- Problem: X is slow.\n- Idea: do Y.\n\n## The Big Idea\nBecause Z.\n\n## Where to Be Skeptical\nOnly one dataset.\n"
 
 
@@ -134,6 +137,17 @@ class AppSmokeTest(unittest.TestCase):
         self.assertEqual(at.get("segmented_control")[0].value, "Insights")
         self.assertTrue(any("Where in the paper: Table 2" in c for c in texts(at.caption)))
         self.assertEqual(texts(at.metric), [])  # Overview content is NOT rendered (lazy views)
+
+    def test_token_animation_renders_and_charts_offer_a_gif(self):
+        paper = v3_paper()
+        paper["insights"]["insights"].append({"title": "Tokens", "summary": "s", "visual": {"type": "tokens", "spec": TOKENS}})
+        at = boot([paper], query={"paper": "2611.00001", "view": "insights"})
+        self.assert_healthy(at)
+        self.assertTrue(any("3. Tokens" in m for m in texts(at.markdown)))
+        chart_gif = next(b for b in at.button if b.label == "🎞️ Make GIF" and b.key.startswith("gif-2611.00001-i2-"))
+        chart_gif.click().run()
+        self.assert_healthy(at)
+        self.assertEqual(len(at.get("download_button")), 2)  # the analysis download + the new GIF download
 
     def test_analysis_view_is_sectioned_with_reading_time(self):
         at = boot([v3_paper()], query={"paper": "2611.00001", "view": "analysis"})

@@ -44,6 +44,7 @@ MAX_DETAIL = 64
 MAX_EDGE_LABEL = 18
 MAX_CAPTION = 84
 MAX_TITLE = 70
+MAX_EXAMPLE = 30
 
 NODE_W = 176
 LABEL_SIZE = 14
@@ -60,10 +61,16 @@ HEADER = 62
 FOOTER = 58
 MIN_W = 720
 MAX_LAYERS_LR = 4
+LANE_GAP = 60  # between compare lanes: room for both group boxes and their titles
+EXAMPLE_SIZE = 11
+EXAMPLE_H = 20  # value chip at the bottom of a node
+NOVEL_TAG = ("NEW", 9.5, 34, 15)  # text, font size, width, height (sits on the top border)
+CHIP_FILL = "#ffffff"
+PACKET_R = 5
 
-STEP_SECONDS = 1.8
-HOLD_SECONDS = 2.6
-DRAW_SECONDS = 0.7
+STEP_SECONDS = 2.8
+HOLD_SECONDS = 3.2
+DRAW_SECONDS = 0.9
 
 
 # --------------------------------------------------------------------------
@@ -76,6 +83,12 @@ def _clip(text: Any, limit: int) -> str:
     return value[: limit - 1].rstrip() + "…"
 
 
+def _truthy(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "yes", "1", "new"}
+    return value is True or value == 1
+
+
 @dataclass
 class Node:
     id: str
@@ -83,6 +96,8 @@ class Node:
     detail: str = ""
     kind: str = "process"
     group: str = ""
+    novel: bool = False  # introduced by this paper (vs a standard component)
+    example: str = ""  # the running example's value at this node, e.g. "196 x 768"
 
 
 @dataclass
@@ -141,6 +156,8 @@ class FlowSpec:
                 detail=_clip(item.get("detail") or item.get("description"), MAX_DETAIL),
                 kind=kind if kind in NODE_KINDS else "process",
                 group=_clip(item.get("group"), 24),
+                novel=_truthy(item.get("novel")),
+                example=_clip(item.get("example"), MAX_EXAMPLE),
             )
             nodes.append(node)
             by_id[node_id] = node
@@ -216,6 +233,8 @@ class FlowSpec:
                     "detail": n.detail,
                     "kind": n.kind,
                     "group": n.group,
+                    "novel": n.novel,
+                    "example": n.example,
                 }
                 for n in self.nodes
             ],
@@ -265,6 +284,7 @@ class Placed:
     layer: int
     label_lines: list[str]
     detail_lines: list[str]
+    example_lines: list[str] = field(default_factory=list)
 
     @property
     def cx(self) -> float:
@@ -287,6 +307,27 @@ class Placed:
                 ty += DETAIL_LINE_H
                 rows.append((line, ty, False))
         return rows
+
+    def example_box(self) -> Optional[tuple[float, float, float, float]]:
+        """(x, y, w, h) of the value chip, or None when the node has no example."""
+        if not self.example_lines:
+            return None
+        h = EXAMPLE_H + (len(self.example_lines) - 1) * DETAIL_LINE_H
+        return self.x + 10, self.y + self.h - h - 8, self.w - 20, h
+
+    def example_rows(self) -> list[tuple[str, float]]:
+        box = self.example_box()
+        if box is None:
+            return []
+        top = box[1] + 14
+        return [(line, top + i * DETAIL_LINE_H) for i, line in enumerate(self.example_lines)]
+
+    def novel_tag(self) -> Optional[tuple[float, float, float, float]]:
+        """(x, y, w, h) of the NEW tag straddling the top-right border."""
+        if not self.node.novel:
+            return None
+        _, _, w, h = NOVEL_TAG
+        return self.x + self.w - w - 10, self.y - h / 2, w, h
 
 
 @dataclass
@@ -449,14 +490,33 @@ def _order_layers(
     return layers
 
 
-def _node_size(node: Node) -> tuple[float, list[str], list[str]]:
+def _lane_ranks(spec: FlowSpec, chains: dict[int, list[str]]) -> dict[str, int]:
+    """Lane per node for side-by-side comparisons ("Baseline" vs "This paper"): every node
+    grouped, 2+ groups, and no edge between groups. Empty when the diagram is not one."""
+    groups = list(dict.fromkeys(n.group for n in spec.nodes))
+    if len(groups) < 2 or "" in groups:
+        return {}
+    group_of = {n.id: n.group for n in spec.nodes}
+    if any(group_of[e.src] != group_of[e.dst] for e in spec.edges):
+        return {}
+    rank = {nid: groups.index(group) for nid, group in group_of.items()}
+    for ei, chain in chains.items():
+        for dummy in chain[1:-1]:
+            rank[dummy] = rank[spec.edges[ei].src]
+    return rank
+
+
+def _node_size(node: Node) -> tuple[float, list[str], list[str], list[str]]:
     inner = NODE_W - 22
     label_lines = wrap_text(node.label, LABEL_SIZE, inner, True, 2)
     detail_lines = wrap_text(node.detail, DETAIL_SIZE, inner, False, 2)
+    example_lines = wrap_text(node.example, EXAMPLE_SIZE, inner - 16, False, 2)
     h = 22 + len(label_lines) * LABEL_LINE_H
     if detail_lines:
         h += 6 + len(detail_lines) * DETAIL_LINE_H
-    return max(54.0, float(h)), label_lines, detail_lines
+    if example_lines:
+        h += 10 + EXAMPLE_H + (len(example_lines) - 1) * DETAIL_LINE_H
+    return max(54.0, float(h)), label_lines, detail_lines, example_lines
 
 
 def layout_flow(spec: FlowSpec) -> Layout:
@@ -481,11 +541,11 @@ def layout_flow(spec: FlowSpec) -> Layout:
 
     by_id = {n.id: n for n in spec.nodes}
     sizes: dict[str, tuple[float, float]] = {}
-    lines: dict[str, tuple[list[str], list[str]]] = {}
+    lines: dict[str, tuple[list[str], list[str], list[str]]] = {}
     for nid, node in by_id.items():
-        h, ll, dl = _node_size(node)
+        h, ll, dl, el = _node_size(node)
         sizes[nid] = (NODE_W, h)
-        lines[nid] = (ll, dl)
+        lines[nid] = (ll, dl, el)
 
     def size(n: str) -> tuple[float, float]:
         return sizes.get(n, (0.0, float(DUMMY)))
@@ -501,11 +561,24 @@ def layout_flow(spec: FlowSpec) -> Layout:
     gap_flow = GAP_FLOW_LR if horizontal else GAP_FLOW_TB
     gap_cross = GAP_CROSS_LR if horizontal else GAP_CROSS_TB
 
+    def run_ext(members: list[str]) -> float:
+        return sum(cross_ext(n) for n in members) + gap_cross * max(0, len(members) - 1)
+
+    lane_rank = _lane_ranks(spec, chains)
+    n_lanes = max(lane_rank.values()) + 1 if lane_rank else 1
+
+    def lane_members(layer: list[str], lane: int) -> list[str]:
+        return [n for n in layer if lane_rank.get(n, 0) == lane]
+
+    lane_ext = [max(run_ext(lane_members(layer, k)) for layer in layers) for k in range(n_lanes)]
+    lane_start: list[float] = []
+    acc = 0.0
+    for ext in lane_ext:
+        lane_start.append(acc)
+        acc += ext + LANE_GAP
+    total_cross = acc - LANE_GAP
+
     layer_ext = [max(flow_ext(n) for n in layer) for layer in layers]
-    col_cross = [
-        sum(cross_ext(n) for n in layer) + gap_cross * (len(layer) - 1) for layer in layers
-    ]
-    total_cross = max(col_cross)
     flow_pos: list[float] = []
     acc = 0.0
     for ext in layer_ext:
@@ -516,15 +589,17 @@ def layout_flow(spec: FlowSpec) -> Layout:
     centers: dict[str, tuple[float, float]] = {}
     placed: dict[str, Placed] = {}
     for li, layer in enumerate(layers):
-        v = (total_cross - col_cross[li]) / 2
-        for nid in layer:
-            u = flow_pos[li] + (layer_ext[li] - flow_ext(nid)) / 2
-            w, h = size(nid)
-            x, y = (u, v) if horizontal else (v, u)
-            centers[nid] = (x + w / 2, y + h / 2)
-            if nid in by_id:
-                placed[nid] = Placed(by_id[nid], x, y, w, h, li, *lines[nid])
-            v += cross_ext(nid) + gap_cross
+        for lane in range(n_lanes):
+            members = lane_members(layer, lane)
+            v = lane_start[lane] + (lane_ext[lane] - run_ext(members)) / 2
+            for nid in members:
+                u = flow_pos[li] + (layer_ext[li] - flow_ext(nid)) / 2
+                w, h = size(nid)
+                x, y = (u, v) if horizontal else (v, u)
+                centers[nid] = (x + w / 2, y + h / 2)
+                if nid in by_id:
+                    placed[nid] = Placed(by_id[nid], x, y, w, h, li, *lines[nid])
+                v += cross_ext(nid) + gap_cross
 
     content_w = total_flow if horizontal else total_cross
     content_h = total_cross if horizontal else total_flow
@@ -629,17 +704,17 @@ def layout_flow(spec: FlowSpec) -> Layout:
         )
         if not clash:
             groups.append((name, gx0, gy0, gx1 - gx0, gy1 - gy0))
-    group_pad = 26 if groups else 0
+    top_pad = (26 if groups else 0) + (NOVEL_TAG[3] / 2 + 2 if any(n.novel for n in spec.nodes) else 0)
 
     width = max(MIN_W, content_w + 2 * PAD)
-    height = HEADER + group_pad + content_h + FOOTER
+    height = HEADER + top_pad + content_h + FOOTER
     total_seconds = len(spec.steps) * STEP_SECONDS + HOLD_SECONDS
     return Layout(
         spec=spec,
         width=math.ceil(width),
         height=math.ceil(height),
         ox=(width - content_w) / 2,
-        oy=HEADER + group_pad,
+        oy=HEADER + top_pad,
         horizontal=horizontal,
         placed=placed,
         edges=geoms,
@@ -686,6 +761,8 @@ def build_css(layout: Layout) -> str:
         "stroke-dasharray:1 1;stroke-dashoffset:0}",
         ".ed.bk{stroke:%s}" % BACK_EDGE_COLOR,
         ".cp{opacity:0}",
+        ".pk{opacity:0}",
+        ".ex{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}",
     ]
     frames: list[str] = []
     anim: list[str] = []
@@ -732,6 +809,19 @@ def build_css(layout: Layout) -> str:
                 ],
             )
         )
+        frames.append(
+            _keyframes(
+                f"pk{k}",
+                [
+                    (0, "opacity:0"),
+                    (pct(a), "opacity:0"),
+                    (pct(a) + 0.01, "opacity:1"),
+                    (pct(a + DRAW_SECONDS), "opacity:1"),
+                    (pct(a + DRAW_SECONDS + 0.25), "opacity:0"),
+                    (100, "opacity:0"),
+                ],
+            )
+        )
         last = k == n - 1
         frames.append(
             _keyframes(
@@ -746,11 +836,27 @@ def build_css(layout: Layout) -> str:
                 ],
             )
         )
-        for sel, kf in ((f".nd.s{k}", f"nd{k}"), (f".ed.s{k}", f"ed{k}"),
-                        (f".ar.s{k}", f"ar{k}"), (f".cp.s{k}", f"cp{k}")):
+        for sel, kf in ((f".nd.s{k}", f"nd{k}"), (f".ed.s{k}", f"ed{k}"), (f".ar.s{k}", f"ar{k}"),
+                        (f".pk.s{k}", f"pk{k}"), (f".cp.s{k}", f"cp{k}")):
             anim.append(f"{sel}{{animation:{kf} {total:.2f}s linear infinite}}")
     motion = "@media (prefers-reduced-motion:no-preference){" + "".join(anim) + "}"
     return "".join(rules) + "".join(frames) + motion
+
+
+def _packet_svg(g: EdgeGeom, layout: Layout) -> str:
+    """A dot riding the tip of the edge while it draws: the example moving through the system."""
+    total = layout.total_seconds
+    t0 = g.step * STEP_SECONDS / total
+    t1 = (g.step * STEP_SECONDS + DRAW_SECONDS) / total
+    if t0 <= 0:
+        points, times = "0;1;1", f"0;{t1:.4f};1"
+    else:
+        points, times = "0;0;1;1", f"0;{t0:.4f};{t1:.4f};1"
+    return (
+        f'<circle class="pk s{g.step}" r="{PACKET_R}" fill="{ACCENT}" stroke="#ffffff" stroke-width="2">'
+        f'<animateMotion dur="{total:.2f}s" repeatCount="indefinite" calcMode="linear" '
+        f'keyPoints="{points}" keyTimes="{times}" path="{g.path_d()}"/></circle>'
+    )
 
 
 def render_svg(layout: Layout) -> str:
@@ -797,14 +903,44 @@ def render_svg(layout: Layout) -> str:
                 f'text-anchor="middle" fill="{TEXT_MUTED}" stroke="{CARD_FILL}" stroke-width="4" '
                 f'paint-order="stroke">{_esc(g.edge.label)}</text>'
             )
+    for g in layout.edges:
+        add(_packet_svg(g, layout))
     for p in layout.placed.values():
         fill, stroke = KIND_COLORS[p.node.kind]
         step = layout.node_step[p.node.id]
         add(f'<g class="nd s{step}">')
+        if p.node.novel:
+            add(
+                f'<rect x="{p.x - 4:.1f}" y="{p.y - 4:.1f}" width="{p.w + 8:.0f}" height="{p.h + 8:.0f}" '
+                f'rx="13" fill="none" stroke="{ACCENT}" stroke-opacity=".28" stroke-width="3"/>'
+            )
+            stroke = ACCENT
         add(
             f'<rect x="{p.x:.1f}" y="{p.y:.1f}" width="{p.w:.0f}" height="{p.h:.0f}" rx="10" '
             f'fill="{fill}" stroke="{stroke}"/>'
         )
+        tag = p.novel_tag()
+        if tag:
+            tx, ty, tw, th = tag
+            add(
+                f'<rect x="{tx:.1f}" y="{ty:.1f}" width="{tw}" height="{th}" rx="{th / 2}" fill="{ACCENT}"/>'
+                f'<text x="{tx + tw / 2:.1f}" y="{ty + th - 4:.1f}" font-size="{NOVEL_TAG[1]}" '
+                f'font-weight="700" letter-spacing=".6" text-anchor="middle" fill="#ffffff">{NOVEL_TAG[0]}</text>'
+            )
+        box = p.example_box()
+        if box:
+            bx, by, bw, bh = box
+            add(f'<g class="ar s{step}">')
+            add(
+                f'<rect x="{bx:.1f}" y="{by:.1f}" width="{bw:.0f}" height="{bh:.0f}" rx="6" '
+                f'fill="{CHIP_FILL}" stroke="{KIND_COLORS[p.node.kind][1]}" stroke-opacity=".45"/>'
+            )
+            for text, ty in p.example_rows():
+                add(
+                    f'<text class="ex" x="{p.cx:.1f}" y="{ty:.1f}" font-size="{EXAMPLE_SIZE}" '
+                    f'text-anchor="middle" fill="{TEXT_DARK}">{_esc(text)}</text>'
+                )
+            add("</g>")
         for text, ty, is_label in p.text_rows():
             if is_label:
                 add(

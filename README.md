@@ -42,7 +42,7 @@ PaperFlux fetches the most-upvoted Hugging Face Daily Papers and turns each one 
       B -->|Top N by upvotes| C[Hugging Face API]
       B -->|Download PDFs| D[arXiv]
       B -->|PDF| E[Analyst agent - Gemini chain]
-      E -->|Writeup + PDF| I[Insights planner - Gemini chain / optional Groq]
+      E -->|Visual brief + writeup + PDF| I[Insights planner - Gemini chain / optional Groq]
       I -->|JSON plan| R[Visual renderer: layout + animation + GIF]
       I -->|Upsert| F[(MongoDB)]
       G[Streamlit UI] -->|Display| F
@@ -52,6 +52,16 @@ PaperFlux fetches the most-upvoted Hugging Face Daily Papers and turns each one 
 ## How the insights work
 
 Models are good at deciding *what* matters and bad at geometry, so the insights agent never draws. It returns a JSON plan (validated by a response schema): `tldr`, a `core_concept` with an animated `flow`, `key_numbers`, and 2-3 `insights`, each with a `flow` or `chart`. `paperflux/src/visuals/` turns that into an auto-laid-out animated SVG (or a GIF). Prompts live in `paperflux/src/agents/*/SKILL.md`.
+
+The analyst ends its writeup with a **Visual Brief** (components and which ones are new, a running example with concrete values, baseline vs this paper, loops, transcribed results tables, ablations and cost/quality pairs). It costs no extra request: the processor splits it off before storing the writeup (readers never see it) and hands it to the planner ahead of the writeup, which matters most when the planner runs text-only.
+
+What the renderer can show:
+
+- **Flows**: nodes the paper introduces get a NEW tag (`novel`), each node can carry the running example's value (`example`) in a chip that appears as the data arrives, and a packet travels along every edge as it draws. Two groups with no edges between them become aligned **compare lanes** (baseline vs this paper).
+- **Token animations** (`tokens`): a row of token cells that change state step by step (new, keep, drop, mask, focus, hidden, plus a small tag), for methods that act on tokens: speculative decoding, masked decoding, pruning, KV eviction, expert routing.
+- **Charts**: `bar`, `line`, and `scatter` (cost vs quality, log axis for wide ranges), with the paper's method drawn in the accent colour (`highlight`) and baselines in grey.
+
+Every flow, token animation and chart has a **Make GIF** button. Chart GIFs reveal the baselines first, then the paper's method, then the gap to the best baseline (only when the y-axis label says which direction is better). Drawing is deterministic Pillow (`visuals/raster.py`), so GIFs need no browser.
 
 ## Free-tier budgeting (Gemini)
 
@@ -69,7 +79,7 @@ Extra API keys only add capacity if they belong to **different projects**.
 1. **Scheduled polling**: the scheduler checks hourly whether today's papers need processing
 2. **Selection**: top papers by upvotes from Hugging Face, up to the daily budget
 3. **PDFs**: downloaded from arXiv, only for papers that still need work
-4. **Analyst agent**: layered explanation from the native PDF
+4. **Analyst agent**: layered explanation from the native PDF, plus a Visual Brief for the planner
 5. **Insights planner**: structured plan; one automatic repair pass if the plan is unusable
 6. **Storage**: each paper is upserted as it finishes; old papers are pruned only after new ones exist
 7. **UI**: Overview (TL;DR, core concept, numbers), Insights & Diagrams, Detailed Analysis, Abstract

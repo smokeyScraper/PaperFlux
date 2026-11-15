@@ -12,7 +12,9 @@ from paperflux.src.config.settings import AGENTS_DIR
 
 
 def good_plan(n_insights=2):
-    flow = {"type": "flow", "title": "How", "nodes": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}, {"id": "c", "label": "C"}],
+    flow = {"type": "flow", "title": "How",
+            "nodes": [{"id": "a", "label": "A", "example": "3 tokens"}, {"id": "b", "label": "B", "novel": True, "example": "3 x 8"},
+                      {"id": "c", "label": "C"}],
             "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}],
             "steps": [{"caption": "one", "nodes": ["a", "b"]}, {"caption": "two", "nodes": ["c"]}]}
     chart = {"type": "chart", "title": "Acc", "chart": {"kind": "bar", "source": "Table 1",
@@ -51,6 +53,29 @@ class ParsePlanTest(unittest.TestCase):
         self.assertEqual(doc["insights"][0]["visual"], {"type": "none"})
         self.assertTrue(any("flow needs" in p for p in problems))
         self.assertFalse(is_usable(doc))
+
+    def test_new_visual_fields_survive_parsing(self):
+        doc, _ = parse_plan(json.dumps(good_plan()))
+        nodes = doc["core_concept"]["visual"]["spec"]["nodes"]
+        self.assertEqual([n["novel"] for n in nodes], [False, True, False])
+        self.assertEqual(nodes[1]["example"], "3 x 8")
+        plan = good_plan()
+        plan["insights"][1]["visual"]["chart"].update(kind="scatter", highlight="Ours", series=[
+            {"name": "Ours", "points": [{"label": "A", "x": 1, "value": 2}]},
+            {"name": "Baselines", "points": [{"label": "B", "x": 10, "value": 1}]}])
+        chart = parse_plan(json.dumps(plan))[0]["insights"][1]["visual"]["spec"]
+        self.assertEqual((chart["kind"], chart["highlight"]), ("scatter", "Ours"))
+        self.assertEqual(chart["series"][1]["points"][0]["x"], 10.0)
+
+    def test_thin_core_animation_is_flagged_without_blocking(self):
+        plan = good_plan()
+        for node in plan["core_concept"]["animation"]["nodes"]:
+            node.pop("novel", None)
+            node.pop("example", None)
+        doc, problems = parse_plan(json.dumps(plan))
+        self.assertTrue(is_usable(doc))  # a warning, not a reason to spend a repair request
+        self.assertTrue(any("novel" in p for p in problems))
+        self.assertTrue(any("example value" in p for p in problems))
 
     def test_no_json_returns_none(self):
         doc, problems = parse_plan("I cannot do that")
@@ -93,6 +118,23 @@ class AgentTest(unittest.TestCase):
         self.assertIs(kwargs["response_schema"], PLAN_SCHEMA)
         self.assertIn("writeup", kwargs["user_text"])
         client.generate_text.assert_not_called()
+
+    def test_visual_brief_is_sent_before_the_writeup(self):
+        client = MagicMock()
+        client.can_read_pdf = False
+        client.generate_text.return_value = json.dumps(good_plan())
+        self.make(client).run("x.pdf", "W" * 30000, visual_brief="### Components\n- Encoder | new: yes")
+        text = client.generate_text.call_args.kwargs["user_text"]
+        self.assertIn("- Encoder | new: yes", text)
+        self.assertLess(text.index("Visual brief"), text.index("Analyst writeup"))
+        self.assertIn("[...truncated...]", text)  # the long writeup is cut, the brief is not
+
+    def test_no_brief_means_no_empty_brief_block(self):
+        client = MagicMock()
+        client.can_read_pdf = False
+        client.generate_text.return_value = json.dumps(good_plan())
+        self.make(client).run("x.pdf", "writeup")
+        self.assertNotIn("Visual brief", client.generate_text.call_args.kwargs["user_text"])
 
     def test_unusable_first_answer_triggers_one_repair_pass(self):
         client = MagicMock()

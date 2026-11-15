@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 from typing import Any, Optional
@@ -7,8 +8,10 @@ import streamlit as st
 from paperflux.src.ui.mermaid import render_mermaid
 from paperflux.src.ui.theme import DARK, LIGHT, current_theme
 from paperflux.src.visuals.chart import ChartSpec
+from paperflux.src.visuals.chart_gif import render_chart_gif
 from paperflux.src.visuals.flow import FlowSpec, layout_flow, render_svg
 from paperflux.src.visuals.gif import render_gif
+from paperflux.src.visuals.tokens import TokenSpec, layout_tokens, render_tokens_gif, render_tokens_svg
 from paperflux.src.visuals.svg_sanitizer import sanitize_svg  # noqa: F401  (re-exported)
 
 _VIEWBOX = re.compile(r"""viewBox\s*=\s*['"]([\d.\s]+)['"]""", re.IGNORECASE)
@@ -17,19 +20,32 @@ _CHART_TEXT = {LIGHT: "#0f172a", DARK: "#e2e8f0"}
 
 
 # ---------------------------------------------------------------- caching ----
+def _parse(kind: str, raw: Any) -> Any:
+    return {"flow": FlowSpec, "tokens": TokenSpec, "chart": ChartSpec}[kind].from_raw(raw)
+
+
 @st.cache_data(show_spinner=False, max_entries=256)
-def _flow_svg(spec_json: str) -> Optional[tuple[str, int]]:
-    spec = FlowSpec.from_raw(json.loads(spec_json))
+def _animated_svg(kind: str, spec_json: str) -> Optional[tuple[str, int]]:
+    spec = _parse(kind, json.loads(spec_json))
     if spec is None:
         return None
-    layout = layout_flow(spec)
-    return render_svg(layout), int(layout.height) + 16
+    if kind == "flow":
+        layout = layout_flow(spec)
+        return render_svg(layout), int(layout.height) + 16
+    layout = layout_tokens(spec)
+    return render_tokens_svg(layout), int(layout.height) + 16
 
 
 @st.cache_data(show_spinner=False, max_entries=32)
-def _flow_gif(spec_json: str) -> Optional[bytes]:
-    spec = FlowSpec.from_raw(json.loads(spec_json))
-    return render_gif(layout_flow(spec)) if spec else None
+def _gif(kind: str, spec_json: str) -> Optional[bytes]:
+    spec = _parse(kind, json.loads(spec_json))
+    if spec is None:
+        return None
+    if kind == "flow":
+        return render_gif(layout_flow(spec))
+    if kind == "tokens":
+        return render_tokens_gif(layout_tokens(spec))
+    return render_chart_gif(spec)
 
 
 # ---------------------------------------------------------------- entry ------
@@ -37,10 +53,10 @@ def render_insight_visual(visual: Optional[dict[str, Any]], key: str = "visual")
     """Render any stored visual: new flow/chart types and legacy svg/mermaid/vega-lite."""
     visual = visual or {}
     kind = str(visual.get("type") or "").lower()
-    if kind == "flow":
-        render_flow(visual.get("spec") or {}, key)
+    if kind in {"flow", "tokens"}:
+        _render_animated(kind, visual.get("spec") or {}, key)
     elif kind == "chart":
-        _render_chart(visual)
+        _render_chart(visual, key)
     elif kind in {"vega-lite", "vegalite", "vega_lite"}:
         _render_vega_lite(visual)
     elif kind == "mermaid":
@@ -53,46 +69,49 @@ def render_insight_visual(visual: Optional[dict[str, Any]], key: str = "visual")
         st.caption("No visual was generated for this insight.")
 
 
-# ---------------------------------------------------------------- flow -------
-def render_flow(spec: dict[str, Any], key: str = "flow") -> None:
+# ---------------------------------------------------------------- animated ---
+def _render_animated(kind: str, spec: dict[str, Any], key: str) -> None:
+    """Flows and token sequences: an animated SVG inline, plus walkthrough and GIF."""
     spec_json = json.dumps(spec, sort_keys=True)
-    rendered = _flow_svg(spec_json)
+    rendered = _animated_svg(kind, spec_json)
     if not rendered:
         st.caption("This diagram could not be drawn.")
         return
     svg, height = rendered
     st.iframe(f'<div style="width:100%">{svg}</div>', height=height, width="stretch")
-    _flow_extras(spec_json, key)
+    _extras(kind, spec_json, key)
 
 
 @st.fragment
-def _flow_extras(spec_json: str, key: str) -> None:
+def _extras(kind: str, spec_json: str, key: str) -> None:
     """Step-by-step text + on-demand GIF. A fragment, so clicking does not rerun the page."""
-    spec = FlowSpec.from_raw(json.loads(spec_json))
+    spec = _parse(kind, json.loads(spec_json))
     if spec is None:
         return
+    tag = hashlib.sha1(f"{kind}:{spec_json}".encode("utf-8")).hexdigest()[:12]
     left, right = st.columns([3, 1])
     with left:
-        with st.expander("Read the walkthrough"):
-            for index, step in enumerate(spec.steps, start=1):
-                st.markdown(f"{index}. {step.caption}")
+        if kind != "chart":
+            with st.expander("Read the walkthrough"):
+                for index, step in enumerate(spec.steps, start=1):
+                    st.markdown(f"{index}. {step.caption}")
     with right:
-        if st.button("🎞️ Make GIF", key=f"gif-{key}-{spec.fingerprint()}"):
+        if st.button("🎞️ Make GIF", key=f"gif-{key}-{tag}"):
             with st.spinner("Rendering GIF…"):
-                data = _flow_gif(spec_json)
+                data = _gif(kind, spec_json)
             if data:
                 st.image(data)
                 st.download_button(
                     "Download GIF",
                     data,
-                    file_name=f"paperflux-{spec.fingerprint()}.gif",
+                    file_name=f"paperflux-{tag}.gif",
                     mime="image/gif",
-                    key=f"dl-{key}-{spec.fingerprint()}",
+                    key=f"dl-{key}-{tag}",
                 )
 
 
 # ---------------------------------------------------------------- charts -----
-def _render_chart(visual: dict[str, Any]) -> None:
+def _render_chart(visual: dict[str, Any], key: str = "chart") -> None:
     chart = ChartSpec.from_raw(visual.get("spec"))
     if chart is None:
         st.caption("Chart data was missing or invalid.")
@@ -105,6 +124,7 @@ def _render_chart(visual: dict[str, Any]) -> None:
     caption = visual.get("caption") or (f"Source: {chart.source}" if chart.source else "")
     if caption:
         st.caption(caption)
+    _extras("chart", json.dumps(chart.to_dict(), sort_keys=True), key)
 
 
 def _themed(spec: dict[str, Any]) -> dict[str, Any]:

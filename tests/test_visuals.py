@@ -4,9 +4,10 @@ import xml.etree.ElementTree as ET
 
 from PIL import Image
 
-from paperflux.src.visuals.chart import ChartSpec
-from paperflux.src.visuals.flow import FlowSpec, layout_flow, render_svg
-from paperflux.src.visuals.gif import _drawable, render_gif
+from paperflux.src.visuals.chart import HIGHLIGHT_COLOR, ChartSpec
+from paperflux.src.visuals.chart_gif import ChartFrames, callout, chart_to_gif, direction, nice_ticks
+from paperflux.src.visuals.flow import ACCENT, FlowSpec, layout_flow, render_svg
+from paperflux.src.visuals.gif import _drawable, _partial, draw_frame, render_gif
 from paperflux.src.visuals.svg_sanitizer import sanitize_svg
 
 LORA = {
@@ -29,6 +30,20 @@ LORA = {
         {"caption": "And the tiny trainable path", "nodes": ["a", "b"]},
         {"caption": "Both are summed", "nodes": ["s", "y"]},
     ],
+}
+RICH = {
+    "title": "One token through a LoRA layer",
+    "nodes": [
+        {"id": "x", "label": "Hidden state x", "kind": "input", "example": "x: 4096 dims"},
+        {"id": "w", "label": "Frozen W", "detail": "pretrained", "kind": "model", "example": "W x: 4096 dims"},
+        {"id": "a", "label": "Down-projection A", "detail": "trainable", "novel": True, "example": "A x: 8 dims"},
+        {"id": "b", "label": "Up-projection B", "detail": "trainable, starts at 0", "novel": "yes", "example": "B A x: 4096 dims and then some more text"},
+        {"id": "y", "label": "Output h", "kind": "output"},
+    ],
+    "edges": [{"from": "x", "to": "w"}, {"from": "x", "to": "a"}, {"from": "a", "to": "b"},
+              {"from": "w", "to": "y"}, {"from": "b", "to": "y"}],
+    "steps": [{"caption": "In", "nodes": ["x", "w"]}, {"caption": "Down", "nodes": ["a"]},
+              {"caption": "Up", "nodes": ["b"]}, {"caption": "Out", "nodes": ["y"]}],
 }
 CYCLE = {
     "nodes": [{"id": str(i), "label": f"Stage {i}"} for i in range(5)],
@@ -150,19 +165,98 @@ class FlowTest(unittest.TestCase):
             self.assertIn(f'class="{cls}', svg)
 
     def test_spec_roundtrips(self):
-        spec = FlowSpec.from_raw(LORA)
-        again = FlowSpec.from_raw(spec.to_dict())
-        self.assertEqual(spec.fingerprint(), again.fingerprint())
+        for raw in (LORA, RICH):
+            spec = FlowSpec.from_raw(raw)
+            again = FlowSpec.from_raw(spec.to_dict())
+            self.assertEqual(spec.fingerprint(), again.fingerprint())
+
+    def test_novel_nodes_get_a_tag_and_examples_get_a_chip_inside_the_node(self):
+        spec, layout = self.check_layout(RICH)
+        self.assertEqual([n.id for n in spec.nodes if n.novel], ["a", "b"])  # "yes" counts
+        svg = render_svg(layout)
+        ET.fromstring(svg)
+        self.assertEqual(svg.count(">NEW</text>"), 2)
+        self.assertIn(">A x: 8 dims</text>", svg)
+        for p in layout.placed.values():
+            box = p.example_box()
+            if p.node.example:
+                bx, by, bw, bh = box
+                self.assertTrue(p.x < bx and bx + bw < p.x + p.w and p.y < by and by + bh < p.y + p.h)
+                last_text = max(ty for _, ty, _ in p.text_rows())
+                self.assertGreater(by, last_text, f"{p.node.id}: chip overlaps the node text")
+            else:
+                self.assertIsNone(box)
+        tag = layout.placed["a"].novel_tag()
+        self.assertGreaterEqual(tag[1] + layout.oy, 56, "NEW tag must stay below the header")
+
+    def test_every_edge_carries_a_packet_timed_to_its_step(self):
+        import re
+        layout = layout_flow(FlowSpec.from_raw(RICH))
+        svg = render_svg(layout)
+        packets = re.findall(r'<circle class="pk s(\d+)".*?keyTimes="([^"]+)"', svg)
+        self.assertEqual(len(packets), len(layout.edges))
+        for step, times in packets:
+            values = [float(t) for t in times.split(";")]
+            self.assertEqual((values[0], values[-1]), (0.0, 1.0))
+            self.assertEqual(values, sorted(values))
+        self.assertIn(".pk{opacity:0}", svg)  # hidden unless motion is allowed
+
+    def test_example_text_cannot_inject_markup(self):
+        evil = '"><script>alert(1)</script>'
+        raw = {"nodes": [{"id": "a", "label": "A", "example": evil, "novel": "<b>"}, {"id": "b", "label": "B"}],
+               "edges": [{"from": "a", "to": "b"}]}
+        svg = render_svg(layout_flow(FlowSpec.from_raw(raw)))
+        ET.fromstring(svg)
+        self.assertNotIn("<script", svg)
+        self.assertEqual(FlowSpec.from_raw(raw).nodes[0].novel, False)
+
+    def test_compare_groups_become_aligned_lanes(self):
+        raw = {"nodes": [{"id": "b1", "label": "Tokenize", "group": "Baseline"}, {"id": "b2", "label": "Attend", "group": "Baseline"},
+                         {"id": "p1", "label": "Tokenize", "group": "Ours"}, {"id": "p2", "label": "Sparse attend", "group": "Ours", "novel": True},
+                         {"id": "p3", "label": "Merge", "group": "Ours"}],
+               "edges": [{"from": "b1", "to": "b2"}, {"from": "p1", "to": "p2"}, {"from": "p2", "to": "p3"}]}
+        _, layout = self.check_layout(raw)
+        P = layout.placed
+        self.assertTrue(layout.horizontal)
+        self.assertEqual({g[0] for g in layout.groups}, {"Baseline", "Ours"})  # both boxes fit
+        self.assertEqual(P["b1"].x, P["p1"].x)  # matching stages line up
+        self.assertEqual(P["b2"].x, P["p2"].x)
+        self.assertLess(max(P[n].y + P[n].h for n in ("b1", "b2")), min(P[n].y for n in ("p1", "p2", "p3")))
+        self.assertEqual(P["b2"].y, P["b1"].y)  # a lane stays on one row even when shorter
+
+    def test_groups_with_edges_between_them_are_not_forced_into_lanes(self):
+        raw = {**LORA, "nodes": [{**n, "group": "Left" if i % 2 else "Right"} for i, n in enumerate(LORA["nodes"])]}
+        spec, layout = self.check_layout(raw)
+        self.assertIsNotNone(spec)
 
 
 class GifTest(unittest.TestCase):
     def test_gif_is_animated_looping_and_reasonably_small(self):
-        data = render_gif(layout_flow(FlowSpec.from_raw(LORA)))
-        image = Image.open(io.BytesIO(data))
-        self.assertEqual(image.format, "GIF")
-        self.assertGreaterEqual(image.n_frames, 12)
-        self.assertEqual(image.info.get("loop"), 0)
-        self.assertLess(len(data), 600_000)
+        for raw in (LORA, RICH):
+            data = render_gif(layout_flow(FlowSpec.from_raw(raw)))
+            image = Image.open(io.BytesIO(data))
+            self.assertEqual(image.format, "GIF")
+            self.assertGreaterEqual(image.n_frames, 12)
+            self.assertEqual(image.info.get("loop"), 0)
+            self.assertLess(len(data), 600_000)
+
+    def test_gif_draws_a_packet_mid_edge_and_the_chip_only_on_arrival(self):
+        layout = layout_flow(FlowSpec.from_raw(RICH))
+        accent = tuple(int(ACCENT[i:i + 2], 16) for i in (1, 3, 5))
+        step = layout.node_step["b"]
+        moving, settled = draw_frame(layout, step, 0.5), draw_frame(layout, step, 1.0)
+        scale = moving.width / layout.width
+
+        def at(x, y):
+            return int((x + layout.ox) * scale), int((y + layout.oy) * scale)
+
+        edge = next(g for g in layout.edges if (g.edge.src, g.edge.dst) == ("a", "b"))
+        tip = _partial(edge.polyline(14), 0.5)[-1]
+        self.assertLess(sum(abs(a - b) for a, b in zip(moving.getpixel(at(*tip)), accent)), 40)
+        self.assertGreater(sum(abs(a - b) for a, b in zip(settled.getpixel(at(*tip)), accent)), 40)
+        bx, by, bw, bh = layout.placed["b"].example_box()
+        crop = (*at(bx + 2, by + 2), *at(bx + bw - 2, by + bh - 2))
+        self.assertNotEqual(moving.crop(crop).tobytes(), settled.crop(crop).tobytes())
 
     def test_unsupported_glyphs_are_mapped_not_tofu(self):
         out = _drawable("d×d → r≥1 日本", 28)
@@ -178,11 +272,73 @@ class ChartTest(unittest.TestCase):
             "series": [{"name": "Ours", "points": [{"label": "MMLU", "value": "85.3%"}, ["GSM8K", 92]]},
                        {"name": "Base", "points": [{"label": "MMLU", "value": 81}, {"label": "GSM8K", "value": "n/a"}]}],
         })
-        self.assertEqual(chart.series[0][1], [("MMLU", 85.3), ("GSM8K", 92.0)])
-        self.assertEqual(chart.series[1][1], [("MMLU", 81.0)])
+        self.assertEqual([p[:2] for p in chart.series[0][1]], [("MMLU", 85.3), ("GSM8K", 92.0)])
+        self.assertEqual([p[:2] for p in chart.series[1][1]], [("MMLU", 81.0)])
         spec = chart.to_vega_lite()
         self.assertEqual(len(spec["data"]["values"]), 3)
         self.assertIn("xOffset", spec["layer"][0]["encoding"])  # grouped bars for 2 series
+
+    def test_highlight_colours_the_papers_method_and_greys_the_rest(self):
+        raw = {"kind": "bar", "highlight": "Ours", "series": [
+            {"name": "Base", "points": [{"label": "A", "value": 1}]},
+            {"name": "Ours", "points": [{"label": "A", "value": 2}]}]}
+        scale = ChartSpec.from_raw(raw).to_vega_lite()["layer"][0]["encoding"]["color"]["scale"]
+        self.assertEqual(scale["domain"], ["Base", "Ours"])
+        self.assertEqual(scale["range"][1], HIGHLIGHT_COLOR)
+        self.assertNotEqual(scale["range"][0], HIGHLIGHT_COLOR)
+        unknown = ChartSpec.from_raw({**raw, "highlight": "Nobody"})
+        self.assertEqual(unknown.highlight, "")
+        self.assertNotIn("scale", unknown.to_vega_lite()["layer"][0]["encoding"]["color"])
+
+    def test_scatter_needs_x_and_uses_a_log_axis_for_wide_ranges(self):
+        raw = {"kind": "scatter", "x_label": "Params (M)", "series": [
+            {"name": "Ours", "points": [{"label": "LoRA", "x": 0.3, "value": 87.5}]},
+            {"name": "Baselines", "points": [{"label": "FT", "x": 125, "value": 87.6},
+                                             {"label": "no x", "value": 80}]}]}
+        chart = ChartSpec.from_raw(raw)
+        self.assertEqual(sum(len(p) for _, p in chart.series), 2)  # the point without x is dropped
+        spec = chart.to_vega_lite()
+        self.assertEqual(spec["layer"][0]["encoding"]["x"]["scale"], {"type": "log"})
+        self.assertEqual(spec["layer"][1]["encoding"]["text"], {"field": "label"})
+        self.assertEqual(ChartSpec.from_raw(chart.to_dict()).to_dict(), chart.to_dict())
+        self.assertIsNone(ChartSpec.from_raw({"kind": "scatter", "series": [
+            {"name": "a", "points": [{"label": "x", "value": 1}, {"label": "y", "value": 2}]}]}))
+
+    def test_chart_gif_callout_respects_which_direction_is_better(self):
+        raw = {"kind": "bar", "highlight": "Ours", "y_label": "Perplexity (lower is better)", "series": [
+            {"name": "Ours", "points": [{"label": "Wiki", "value": 5.0}, {"label": "C4", "value": 7.5}]},
+            {"name": "A", "points": [{"label": "Wiki", "value": 5.5}, {"label": "C4", "value": 7.0}]},
+            {"name": "B", "points": [{"label": "Wiki", "value": 6.0}]}]}
+        self.assertEqual(callout(ChartSpec.from_raw(raw)), "Ours vs best baseline: Wiki -0.5, C4 +0.5")
+        self.assertEqual(direction("Accuracy (%, higher is better)"), "higher")
+        self.assertEqual(callout(ChartSpec.from_raw({**raw, "y_label": "Perplexity"})), "")  # unknown: no claim
+        self.assertEqual(callout(ChartSpec.from_raw({**raw, "highlight": ""})), "")
+
+    def test_chart_gifs_animate_every_kind_and_bars_start_at_zero(self):
+        bar = {"kind": "bar", "highlight": "Ours", "y_label": "Acc (higher is better)", "series": [
+            {"name": "Ours", "points": [{"label": "A", "value": 87.5}, {"label": "B", "value": 95}]},
+            {"name": "Base", "points": [{"label": "A", "value": 86}, {"label": "B", "value": 94}]}]}
+        line = {**bar, "kind": "line"}
+        scatter = {"kind": "scatter", "highlight": "Ours", "series": [
+            {"name": "Ours", "points": [{"label": "X", "x": 0.3, "value": 87}]},
+            {"name": "Base", "points": [{"label": "Y", "x": 125, "value": 88}, {"label": "Z", "x": 1, "value": 85}]}]}
+        for raw in (bar, line, scatter):
+            image = Image.open(io.BytesIO(chart_to_gif(raw)))
+            self.assertGreater(image.n_frames, 15, raw["kind"])
+            self.assertEqual(image.info.get("loop"), 0)
+        self.assertEqual(ChartFrames(ChartSpec.from_raw(bar)).y_ticks[0], 0)  # no truncated axis
+        self.assertIsNone(chart_to_gif({"series": []}))
+
+    def test_nice_ticks_cover_the_data(self):
+        for lo, hi in ((0, 95.1), (84.7, 87.6), (-3, 12), (5, 5)):
+            ticks = nice_ticks(lo, hi)
+            self.assertLessEqual(ticks[0], lo)
+            self.assertGreaterEqual(ticks[-1], hi)
+            self.assertLessEqual(len(ticks), 12)
+
+    def test_legacy_category_in_x_still_parses(self):
+        chart = ChartSpec.from_raw({"series": [{"name": "a", "points": [{"x": "MMLU", "y": 1}, {"x": "GSM8K", "y": 2}]}]})
+        self.assertEqual([p.label for p in chart.series[0][1]], ["MMLU", "GSM8K"])
 
     def test_too_little_data_is_rejected(self):
         self.assertIsNone(ChartSpec.from_raw({"series": [{"name": "a", "points": [{"label": "x", "value": 1}]}]}))

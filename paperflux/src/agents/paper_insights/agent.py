@@ -27,6 +27,7 @@ from paperflux.src.config.settings import (
 logger = logging.getLogger("paperflux.insights")
 SKILL_PATH = AGENTS_DIR / "paper_insights" / "SKILL.md"
 MAX_WRITEUP_CHARS = 24000
+MAX_BRIEF_CHARS = 8000
 
 
 def build_default_client() -> FallbackLLM:
@@ -66,8 +67,9 @@ class PaperInsightsAgent:
         title: str = "",
         paper_id: str = "",
         abstract: str = "",
+        visual_brief: str = "",
     ) -> dict[str, Any]:
-        user_text = build_user_text(title, paper_id, abstract, explanation)
+        user_text = build_user_text(title, paper_id, abstract, explanation, visual_brief)
         raw = self._ask(user_text, pdf_path)
         doc, problems = parse_plan(raw)
 
@@ -113,19 +115,32 @@ class PaperInsightsAgent:
         return self.client.generate_text(**self._kwargs(user_text))
 
 
-def build_user_text(title: str, paper_id: str, abstract: str, explanation: str) -> str:
-    writeup = (explanation or "").strip()
-    if len(writeup) > MAX_WRITEUP_CHARS:
-        writeup = writeup[:MAX_WRITEUP_CHARS] + "\n[...truncated...]"
+def _cap(text: str, limit: int) -> str:
+    text = (text or "").strip()
+    return text if len(text) <= limit else text[:limit] + "\n[...truncated...]"
+
+
+def build_user_text(
+    title: str, paper_id: str, abstract: str, explanation: str, visual_brief: str = ""
+) -> str:
+    brief = _cap(visual_brief, MAX_BRIEF_CHARS)
+    brief_block = (
+        "--- Visual brief (the analyst's structured notes for you) ---\n"
+        f"{brief}\n"
+        "--- End visual brief ---\n\n"
+        if brief
+        else ""
+    )
     return (
         "Create the explainer pack for this paper, following your instructions exactly.\n"
         "Ground every node, number and claim in the paper (the PDF when attached, otherwise "
-        "the analyst writeup). Never invent components or results.\n\n"
+        "the analyst's notes). Never invent components or results.\n\n"
         f"Paper ID: {paper_id or 'unknown'}\n"
         f"Title: {title or 'See PDF'}\n"
         f"Abstract:\n{abstract or '(not provided)'}\n\n"
+        f"{brief_block}"
         "--- Analyst writeup ---\n"
-        f"{writeup}\n"
+        f"{_cap(explanation, MAX_WRITEUP_CHARS)}\n"
         "--- End analyst writeup ---\n"
     )
 

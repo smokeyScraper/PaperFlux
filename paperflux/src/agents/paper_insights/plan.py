@@ -9,16 +9,22 @@ import json
 import re
 from typing import Any, Optional
 
+from paperflux.src.visuals.chart import KINDS as CHART_KINDS
 from paperflux.src.visuals.chart import ChartSpec
 from paperflux.src.visuals.flow import NODE_KINDS, FlowSpec
+from paperflux.src.visuals.tokens import STATES as TOKEN_STATES
+from paperflux.src.visuals.tokens import TokenSpec
+
+VISUAL_TYPES = {"flow", "chart", "tokens"}
 
 PLAN_SCHEMA_VERSION = 3
 
 _STR = {"type": "STRING"}
+_TOKEN_STATE = {"type": "STRING", "enum": list(TOKEN_STATES)}
 _VISUAL_SCHEMA: dict[str, Any] = {
     "type": "OBJECT",
     "properties": {
-        "type": {"type": "STRING", "enum": ["flow", "chart"]},
+        "type": {"type": "STRING", "enum": ["flow", "chart", "tokens"]},
         "title": _STR,
         "caption": _STR,
         "nodes": {
@@ -31,6 +37,8 @@ _VISUAL_SCHEMA: dict[str, Any] = {
                     "detail": _STR,
                     "kind": {"type": "STRING", "enum": list(NODE_KINDS)},
                     "group": _STR,
+                    "novel": {"type": "BOOLEAN"},
+                    "example": _STR,
                 },
                 "required": ["id", "label"],
             },
@@ -47,17 +55,43 @@ _VISUAL_SCHEMA: dict[str, Any] = {
             "type": "ARRAY",
             "items": {
                 "type": "OBJECT",
-                "properties": {"caption": _STR, "nodes": {"type": "ARRAY", "items": _STR}},
-                "required": ["caption", "nodes"],
+                "properties": {
+                    "caption": _STR,
+                    "nodes": {"type": "ARRAY", "items": _STR},
+                    "changes": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "index": {"type": "INTEGER"},
+                                "state": _TOKEN_STATE,
+                                "text": _STR,
+                                "tag": _STR,
+                            },
+                            "required": ["index", "state"],
+                        },
+                    },
+                },
+                "required": ["caption"],
             },
         },
+        "tokens": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {"text": _STR, "state": _TOKEN_STATE, "tag": _STR},
+                "required": ["text"],
+            },
+        },
+        "legend": {"type": "OBJECT", "properties": {state: _STR for state in TOKEN_STATES if state != "hidden"}},
         "chart": {
             "type": "OBJECT",
             "properties": {
-                "kind": {"type": "STRING", "enum": ["bar", "line"]},
+                "kind": {"type": "STRING", "enum": list(CHART_KINDS)},
                 "x_label": _STR,
                 "y_label": _STR,
                 "source": _STR,
+                "highlight": _STR,
                 "series": {
                     "type": "ARRAY",
                     "items": {
@@ -68,7 +102,11 @@ _VISUAL_SCHEMA: dict[str, Any] = {
                                 "type": "ARRAY",
                                 "items": {
                                     "type": "OBJECT",
-                                    "properties": {"label": _STR, "value": {"type": "NUMBER"}},
+                                    "properties": {
+                                        "label": _STR,
+                                        "value": {"type": "NUMBER"},
+                                        "x": {"type": "NUMBER"},
+                                    },
                                     "required": ["label", "value"],
                                 },
                             },
@@ -152,7 +190,15 @@ def extract_json(text: str) -> Optional[dict[str, Any]]:
 def _visual(raw: Any, where: str, problems: list[str]) -> Optional[dict[str, Any]]:
     if not isinstance(raw, dict):
         return None
-    wants_chart = str(raw.get("type") or "").lower() == "chart" or bool(raw.get("chart"))
+    kind = str(raw.get("type") or "").lower()
+    if kind == "tokens" or (raw.get("tokens") and not raw.get("nodes")):
+        tokens = TokenSpec.from_raw(raw)
+        if tokens is None:
+            problems.append(f"{where}: tokens visual needs at least 2 tokens and a step with changes")
+            return None
+        problems.extend(f"{where}: {w}" for w in tokens.warnings)
+        return {"type": "tokens", "spec": tokens.to_dict(), "caption": tokens.caption}
+    wants_chart = kind == "chart" or bool(raw.get("chart"))
     chart = ChartSpec.from_raw(raw.get("chart") or raw) if wants_chart else None
     if chart is not None:
         return {
@@ -189,6 +235,14 @@ def parse_plan(raw_text: str) -> tuple[Optional[dict[str, Any]], list[str]]:
         ),
     }
 
+    animation = concept["visual"] or {}
+    if animation.get("type") == "flow":
+        nodes = animation["spec"]["nodes"]
+        if not any(n["novel"] for n in nodes):
+            problems.append("core_concept: no node is marked novel (what does this paper add?)")
+        if sum(1 for n in nodes if n["example"]) * 2 < len(nodes):
+            problems.append("core_concept: most nodes lack an example value for the running example")
+
     numbers: list[dict[str, str]] = []
     for item in (data.get("key_numbers") or [])[:4]:
         if not isinstance(item, dict):
@@ -216,7 +270,7 @@ def parse_plan(raw_text: str) -> tuple[Optional[dict[str, Any]], list[str]]:
             }
         )
 
-    visuals = sum(1 for i in insights if i["visual"].get("type") in {"flow", "chart"})
+    visuals = sum(1 for i in insights if i["visual"].get("type") in VISUAL_TYPES)
     if concept["visual"]:
         visuals += 1
     doc = {

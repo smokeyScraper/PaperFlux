@@ -81,22 +81,24 @@ class FakeFetcher:
 
 
 class FakeAnalyst:
-    def __init__(self, error=None):
-        self.calls, self.error = [], error
+    def __init__(self, error=None, brief=""):
+        self.calls, self.error, self.brief = [], error, brief
 
     def run(self, pdf_path, title="", summary="", paper_id=""):
         self.calls.append(paper_id)
         if self.error:
             raise self.error
-        return f"analysis of {paper_id}"
+        text = f"analysis of {paper_id}"
+        return f"{text}\n\n## Visual Brief\n{self.brief}\n" if self.brief else text
 
 
 class FakeInsights:
     def __init__(self, error=None):
-        self.calls, self.error = [], error
+        self.calls, self.error, self.briefs = [], error, []
 
-    def run(self, pdf_path, explanation, title="", paper_id="", abstract=""):
+    def run(self, pdf_path, explanation, title="", paper_id="", abstract="", visual_brief=""):
         self.calls.append(paper_id)
+        self.briefs.append(visual_brief)
         if self.error:
             raise self.error
         return dict(V3)
@@ -155,6 +157,25 @@ class ProcessorTest(unittest.TestCase):
         self.assertEqual(analyst.calls, ["a"])  # analysis reused, NOT paid for twice
         self.assertTrue(db.has_complete_paper("a"))
         self.assertEqual(db.processed_marked, 1)
+
+    def test_visual_brief_goes_to_insights_and_never_reaches_readers(self):
+        db = FakeDB()
+        insights = FakeInsights()
+        proc = make_processor(db, FakeFetcher([entry("a")]), FakeAnalyst(brief="### Components\n- Encoder | new: yes"), insights)
+        self.assertTrue(run(proc))
+        self.assertEqual(insights.briefs, ["### Components\n- Encoder | new: yes"])
+        self.assertEqual(db.docs["a"]["visual_brief"], "### Components\n- Encoder | new: yes")
+        self.assertNotIn("Visual Brief", db.docs["a"]["explanation"])
+        self.assertIn("analysis of a", db.docs["a"]["explanation"])
+
+    def test_resumed_insights_reuse_the_stored_brief(self):
+        db = FakeDB()
+        analyst = FakeAnalyst(brief="- Encoder | new: yes")
+        run(make_processor(db, FakeFetcher([entry("a")]), analyst, FakeInsights(QuotaExhaustedError("spent"))))
+        insights = FakeInsights()
+        self.assertTrue(run(make_processor(db, FakeFetcher([entry("a")]), analyst, insights)))
+        self.assertEqual(analyst.calls, ["a"])
+        self.assertEqual(insights.briefs, ["- Encoder | new: yes"])
 
     def test_analyst_quota_stops_new_work_and_stores_nothing(self):
         db = FakeDB()

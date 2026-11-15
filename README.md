@@ -12,13 +12,13 @@ pinned: true
 
 # PaperFlux: AI Research Paper Insights
 
-PaperFlux fetches the most-upvoted Hugging Face Daily Papers and turns each one into an explainer: a layered written analysis, a TL;DR, an **animated core-concept walkthrough** (exportable as a GIF), key numbers, and 2-3 insights with diagrams and charts built from the paper's own results.
+PaperFlux fetches the most-upvoted Hugging Face Daily Papers and turns each one into an explainer: a layered written analysis, a TL;DR, an **animated core-concept walkthrough**, key numbers, and 2-3 insights with diagrams and charts built from the paper's own results.
 
 ## Features
 
 - **Daily updates**: processes the top papers every weekday at ```8:00 AM UTC``` and never wipes yesterday's papers until today's are ready
 - **Layered analysis**: TL;DR, big idea, how it works, plain-words math, an evidence table with sources, skeptical notes, glossary
-- **Animated explainers**: the model plans the diagram (nodes, edges, narrated steps); PaperFlux lays it out deterministically and animates it. Clean, consistent figures, and a one-click **GIF export**
+- **Animated explainers**: the model plans the diagram (nodes, edges, narrated steps); PaperFlux lays it out deterministically and animates it. Clean, consistent figures
 - **Charts from real numbers**: the model reports the paper's numbers, PaperFlux builds the chart
 - **Free-tier friendly**: quota-aware Gemini client with a per-model fallback chain, client-side rate limiting, a daily paper budget, and resumable runs
 - **Optional second provider**: set `GROQ_API_KEY` to let the text-only planner fall back to Groq's free tier when Gemini quota is spent
@@ -43,7 +43,7 @@ PaperFlux fetches the most-upvoted Hugging Face Daily Papers and turns each one 
       B -->|Download PDFs| D[arXiv]
       B -->|PDF| E[Analyst agent - Gemini chain]
       E -->|Visual brief + writeup + PDF| I[Insights planner - Gemini chain / optional Groq]
-      I -->|JSON plan| R[Visual renderer: layout + animation + GIF]
+      I -->|JSON plan| R[Visual renderer: layout + animation]
       I -->|Upsert| F[(MongoDB)]
       F -->|Writeup + brief + pack| W[Podcast writer - Flash-Lite chain]
       W -->|Two-host script| T[Gemini TTS - 1 multi-speaker call]
@@ -55,7 +55,7 @@ PaperFlux fetches the most-upvoted Hugging Face Daily Papers and turns each one 
 
 ## How the insights work
 
-Models are good at deciding *what* matters and bad at geometry, so the insights agent never draws. It returns a JSON plan (validated by a response schema): `tldr`, a `core_concept` with an animated `flow`, `key_numbers`, and 2-3 `insights`, each with a `flow` or `chart`. `paperflux/src/visuals/` turns that into an auto-laid-out animated SVG (or a GIF). Prompts live in `paperflux/src/agents/*/SKILL.md`.
+Models are good at deciding *what* matters and bad at geometry, so the insights agent never draws. It returns a JSON plan (validated by a response schema): `tldr`, a `core_concept` with an animated `flow`, `key_numbers`, and 2-3 `insights`, each with a `flow` or `chart`. `paperflux/src/visuals/` turns that into an auto-laid-out animated SVG. Prompts live in `paperflux/src/agents/*/SKILL.md`.
 
 The analyst ends its writeup with a **Visual Brief** (components and which ones are new, a running example with concrete values, baseline vs this paper, loops, transcribed results tables, ablations and cost/quality pairs). It costs no extra request: the processor splits it off before storing the writeup (readers never see it) and hands it to the planner ahead of the writeup, which matters most when the planner runs text-only.
 
@@ -65,7 +65,7 @@ What the renderer can show:
 - **Token animations** (`tokens`): a row of token cells that change state step by step (new, keep, drop, mask, focus, hidden, plus a small tag), for methods that act on tokens: speculative decoding, masked decoding, pruning, KV eviction, expert routing.
 - **Charts**: `bar`, `line`, and `scatter` (cost vs quality, log axis for wide ranges), with the paper's method drawn in the accent colour (`highlight`) and baselines in grey.
 
-Every flow, token animation and chart has a **Make GIF** button. Chart GIFs reveal the baselines first, then the paper's method, then the gap to the best baseline (only when the y-axis label says which direction is better). Drawing is deterministic Pillow (`visuals/raster.py`), so GIFs need no browser.
+Flows and token sequences animate inline. An insight with no diagram is simply omitted, so the text stands on its own.
 
 ## Podcasts
 

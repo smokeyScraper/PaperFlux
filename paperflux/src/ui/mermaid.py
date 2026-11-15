@@ -9,7 +9,6 @@ from paperflux.src.ui.theme import DARK, current_theme
 def render_mermaid(code: str, height: int = 420) -> None:
     """Render a Mermaid diagram inside Streamlit via mermaid.js."""
     if not code or not code.strip():
-        st.caption("No diagram was generated for this insight.")
         return
 
     diagram_id = f"mmd-{uuid.uuid4().hex[:10]}"

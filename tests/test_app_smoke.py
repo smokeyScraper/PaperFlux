@@ -146,16 +146,20 @@ class AppSmokeTest(unittest.TestCase):
         self.assertTrue(any("Where in the paper: Table 2" in c for c in texts(at.caption)))
         self.assertEqual(texts(at.metric), [])  # Overview content is NOT rendered (lazy views)
 
-    def test_token_animation_renders_and_charts_offer_a_gif(self):
+    def test_token_animation_renders_and_a_missing_visual_stays_quiet(self):
         paper = v3_paper()
         paper["insights"]["insights"].append({"title": "Tokens", "summary": "s", "visual": {"type": "tokens", "spec": TOKENS}})
+        paper["insights"]["insights"].append(
+            {"title": "Top capability does not imply top reliability", "summary": "s",
+             "why_it_matters": "Accuracy is not enough.", "evidence": "Sec. 4.1.2, Table 2",
+             "visual": {"type": "none"}})
         at = boot([paper], query={"paper": "2611.00001", "view": "insights"})
         self.assert_healthy(at)
-        self.assertTrue(any("3. Tokens" in m for m in texts(at.markdown)))
-        chart_gif = next(b for b in at.button if b.label == "🎞️ Make GIF" and b.key.startswith("gif-2611.00001-i2-"))
-        chart_gif.click().run()
-        self.assert_healthy(at)
-        self.assertEqual(len(at.get("download_button")), 2)  # the analysis download + the new GIF download
+        self.assertTrue(any("4. Top capability" in m for m in texts(at.markdown)))
+        shown = " ".join(texts(at.caption) + texts(at.markdown) + texts(at.info))
+        self.assertNotIn("No visual was generated", shown)
+        self.assertNotIn("could not be drawn", shown)
+        self.assertFalse(any("GIF" in b.label for b in at.button))
 
     def test_ready_podcast_plays_with_transcript_and_shows_in_the_feed(self):
         from paperflux.src.services import database

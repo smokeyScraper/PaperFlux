@@ -38,7 +38,7 @@ turns each one into something you can understand in a couple of minutes.
 
 **What you get**
 - A TL;DR, the core idea, and the headline numbers
-- Step-by-step animated diagrams (export any of them as a GIF) and charts built from the paper's own results
+- Step-by-step animated diagrams and charts built from the paper's own results
 - A layered written analysis: how it works, the math in plain words, the evidence, and where to be skeptical
 - For the top papers, a calm 5-minute audio conversation between two hosts, with a transcript
 

@@ -6,7 +6,8 @@ from datetime import datetime
 from typing import Any, Optional
 from urllib.parse import urlencode
 
-VIEWS = [("overview", "Overview"), ("insights", "Insights"), ("analysis", "Analysis"), ("abstract", "Abstract")]
+# Display order. "overview" stays the default view (no ?view= in the URL), see nav.py.
+VIEWS = [("abstract", "Abstract"), ("overview", "Overview"), ("insights", "Insights"), ("analysis", "Analysis")]
 VIEW_LABELS = {slug: label for slug, label in VIEWS}
 LABEL_TO_SLUG = {label: slug for slug, label in VIEWS}
 

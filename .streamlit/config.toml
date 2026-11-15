@@ -1,8 +1,26 @@
-# Follows the visitor's light/dark preference (no `base` set). Our diagrams draw their
-# own card background, so they read well in both.
+# Follows the visitor's light/dark preference (no `base` set) until they use the header
+# toggle (ui/theme.py). Our diagrams draw their own card background, so they read well in both.
 [theme]
 primaryColor = "#6366f1"
 font = "sans serif"
+baseRadius = "0.6rem"
+paddingTop = "2.2rem"
+chartCategoricalColors = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ec4899", "#ef4444", "#8b5cf6", "#64748b"]
+
+[theme.light]
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f4f6fb"
+textColor = "#0f172a"
+borderColor = "#e2e8f0"
+linkColor = "#4f46e5"
+
+[theme.dark]
+primaryColor = "#818cf8"
+backgroundColor = "#0b1120"
+secondaryBackgroundColor = "#151c2e"
+textColor = "#e2e8f0"
+borderColor = "#26314a"
+linkColor = "#a5b4fc"
 
 [client]
 toolbarMode = "minimal"

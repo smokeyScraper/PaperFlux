@@ -27,13 +27,13 @@ def render_detail(paper: dict[str, Any], papers: list[dict[str, Any]], base_url:
     pid = paper["paper_id"]
     prev_id, next_id, position, total = neighbors(papers, pid)
 
-    back, prev_col, next_col, where = st.columns([1.5, 1, 1, 4], vertical_alignment="center")
-    back.button("← All papers", key="nav-back", on_click=goto, width="stretch")
-    prev_col.button("‹ Prev", key="nav-prev", on_click=goto, args=(prev_id,), disabled=prev_id is None,
-                    shortcut="K", help="Previous paper (K)", width="stretch")
-    next_col.button("Next ›", key="nav-next", on_click=goto, args=(next_id,), disabled=next_id is None,
-                    shortcut="J", help="Next paper (J)", width="stretch")
-    where.caption(f"Paper {position} of {total}")
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.button("← All papers", key="nav-back", on_click=goto)
+        st.button("‹ Prev", key="nav-prev", on_click=goto, args=(prev_id,), disabled=prev_id is None,
+                  shortcut="K", help="Previous paper (K)")
+        st.button("Next ›", key="nav-next", on_click=goto, args=(next_id,), disabled=next_id is None,
+                  shortcut="J", help="Next paper (J)")
+        st.caption(f"Paper {position} of {total}", width="content")
 
     st.markdown(f"## {paper.get('title', 'Untitled')}")
     meta = [short_authors(paper.get("authors") or []), format_date(paper), f"arXiv {pid}"]
@@ -86,6 +86,13 @@ def _render_view(paper: dict[str, Any], view: str) -> None:
     elif view == "analysis":
         _render_analysis(paper)
     else:
+        _render_abstract(paper)
+
+
+def _render_abstract(paper: dict[str, Any]) -> None:
+    _, column, _ = st.columns([1, 6, 1])
+    with column:
+        st.caption("The authors' own abstract")
         st.markdown(paper.get("summary") or "No abstract available.")
 
 

@@ -23,7 +23,7 @@ def render_overview(paper: dict[str, Any]) -> None:
     if numbers:
         cols = st.columns(len(numbers))
         for col, item in zip(cols, numbers):
-            with col:
+            with col, st.container(border=True, height="stretch"):
                 st.metric(item.get("label", ""), item.get("value", ""))
                 if item.get("context"):
                     st.caption(item["context"])
@@ -71,7 +71,8 @@ def render_insights(paper: dict[str, Any]) -> None:
             render_insight_visual(visual, key=f"{paper_id}-i{idx}")
             if insight.get("evidence"):
                 st.caption(f"Where in the paper: {insight['evidence']}")
-            st.divider()
+            if idx < len(items):
+                st.divider()
     elif doc.get("raw"):
         st.info("The diagrams for this paper could not be structured, so here is the model's raw "
                 "note instead. The written analysis is unaffected.")

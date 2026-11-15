@@ -104,6 +104,30 @@ class AppSmokeTest(unittest.TestCase):
         self.assertEqual(texts(at.metric), ["91%"])
         self.assertEqual(at.get("segmented_control")[0].value, "Overview")
 
+    def test_tabs_are_ordered_abstract_first_but_overview_stays_the_default(self):
+        at = boot([v3_paper()], query={"paper": "2611.00001"})
+        control = at.get("segmented_control")[0]
+        self.assertEqual(list(control.options), ["Abstract", "Overview", "Insights", "Analysis"])
+        self.assertEqual(control.value, "Overview")
+
+    def test_abstract_view_shows_the_authors_abstract(self):
+        at = boot([v3_paper()], query={"paper": "2611.00001", "view": "abstract"})
+        self.assert_healthy(at)
+        self.assertEqual(at.get("segmented_control")[0].value, "Abstract")
+        self.assertIn("The abstract.", texts(at.markdown))
+
+    def test_theme_toggle_writes_the_stored_theme_and_reloads(self):
+        at = boot([v3_paper()])
+        self.assert_healthy(at)
+        toggle = at.button(key="theme-toggle")
+        self.assertEqual(toggle.label, "Dark mode")  # AppTest reports a light theme
+        self.assertEqual(at.get("html"), [])
+        toggle.click().run()
+        self.assert_healthy(at)
+        script = " ".join(h.proto.body for h in at.get("html"))
+        self.assertIn("stActiveTheme-", script)
+        self.assertIn("location.reload()", script)
+
     def test_view_param_selects_the_tab_and_renders_only_that_view(self):
         at = boot([v3_paper()], query={"paper": "2611.00001", "view": "insights"})
         self.assert_healthy(at)

@@ -5,12 +5,15 @@ from typing import Any, Optional
 import streamlit as st
 
 from paperflux.src.ui.mermaid import render_mermaid
+from paperflux.src.ui.theme import DARK, LIGHT, current_theme
 from paperflux.src.visuals.chart import ChartSpec
 from paperflux.src.visuals.flow import FlowSpec, layout_flow, render_svg
 from paperflux.src.visuals.gif import render_gif
 from paperflux.src.visuals.svg_sanitizer import sanitize_svg  # noqa: F401  (re-exported)
 
 _VIEWBOX = re.compile(r"""viewBox\s*=\s*['"]([\d.\s]+)['"]""", re.IGNORECASE)
+# textColor of each palette in .streamlit/config.toml
+_CHART_TEXT = {LIGHT: "#0f172a", DARK: "#e2e8f0"}
 
 
 # ---------------------------------------------------------------- caching ----
@@ -95,13 +98,20 @@ def _render_chart(visual: dict[str, Any]) -> None:
         st.caption("Chart data was missing or invalid.")
         return
     try:
-        st.vega_lite_chart(chart.to_vega_lite(), width="stretch")
+        st.vega_lite_chart(_themed(chart.to_vega_lite()), width="stretch")
     except Exception as exc:  # rendering must never break the page
         st.warning(f"Could not render chart: {exc}")
         return
     caption = visual.get("caption") or (f"Source: {chart.source}" if chart.source else "")
     if caption:
         st.caption(caption)
+
+
+def _themed(spec: dict[str, Any]) -> dict[str, Any]:
+    """Streamlit themes axes and legends but not text marks (value labels), which stay black."""
+    config = dict(spec.get("config") or {})
+    config["text"] = {"color": _CHART_TEXT[current_theme()], **(config.get("text") or {})}
+    return {**spec, "config": config}
 
 
 # ---------------------------------------------------------------- legacy -----
@@ -117,7 +127,7 @@ def _render_vega_lite(visual: dict[str, Any]) -> None:
         st.caption("Chart spec was missing or invalid.")
         return
     try:
-        st.vega_lite_chart(spec, width="stretch")
+        st.vega_lite_chart(_themed(spec), width="stretch")
     except Exception as exc:
         st.warning(f"Could not render Vega-Lite chart: {exc}")
         st.code(json.dumps(spec, indent=2)[:4000], language="json")

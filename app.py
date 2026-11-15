@@ -28,6 +28,7 @@ from paperflux.src.ui.detail import render_detail  # noqa: E402
 from paperflux.src.ui.feed import render_empty, render_feed  # noqa: E402
 from paperflux.src.ui.nav import goto  # noqa: E402
 from paperflux.src.ui.status import next_update_text, render_status  # noqa: E402
+from paperflux.src.ui.theme import theme_toggle  # noqa: E402
 
 os.makedirs(TEMP_DIR, exist_ok=True)
 
@@ -73,8 +74,6 @@ def _base_url() -> str:
 db, scheduler = get_services()
 processor = scheduler.paper_processor
 
-st.html("<style>[data-testid='stMainBlockContainer']{padding-top:2.2rem}</style>")
-
 papers = sort_papers(db.get_all_papers())
 meta = db.get_processing_metadata()
 pending_count = sum(1 for p in papers if paper_status(p) == PENDING)
@@ -90,8 +89,11 @@ with st.sidebar:
     if st.button("About PaperFlux", icon=":material/info:", width="stretch"):
         about_dialog()
 
-st.title("📚 PaperFlux")
-st.caption("Today's most-upvoted AI papers, explained with animated diagrams.")
+with st.container(horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"):
+    with st.container(width="content", gap=None):
+        st.title("📚 PaperFlux")
+        st.caption("Today's most-upvoted AI papers, explained with animated diagrams.")
+    theme_toggle()
 
 selected_id = st.query_params.get("paper")
 paper = next((p for p in papers if p["paper_id"] == selected_id), None) if selected_id else None

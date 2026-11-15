@@ -33,9 +33,8 @@ def _card(rank: int, paper: dict[str, Any]) -> None:
     meta = [short_authors(paper.get("authors") or []), format_date(paper)]
     if paper.get("upvotes"):
         meta.append(f"👍 {paper['upvotes']}")
-    with st.container(border=True):
-        text, action = st.columns([6, 1], vertical_alignment="center")
-        with text:
+    with st.container(border=True, horizontal=True, vertical_alignment="center", gap="medium"):
+        with st.container():
             st.markdown(f"##### {rank}. {paper.get('title', 'Untitled')}")
             st.caption(" · ".join(m for m in meta if m))
             description = blurb(paper)
@@ -44,15 +43,13 @@ def _card(rank: int, paper: dict[str, Any]) -> None:
             badge = _BADGES.get(paper_status(paper))
             if badge:
                 st.markdown(badge)
-        with action:
-            st.button(
-                "Open →",
-                key=f"open-{pid}",
-                type="primary" if rank == 1 else "secondary",
-                on_click=goto,
-                args=(pid,),
-                width="stretch",
-            )
+        st.button(
+            "Open →",
+            key=f"open-{pid}",
+            type="primary" if rank == 1 else "secondary",
+            on_click=goto,
+            args=(pid,),
+        )
 
 
 def render_empty(processing: bool, next_update_text: str) -> None:

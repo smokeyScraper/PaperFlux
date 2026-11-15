@@ -178,14 +178,34 @@ class GeminiClient:
             max_output_tokens=max_output_tokens,
         )
 
-    def generate_speech(self, prompt: str, speakers: Sequence[tuple[str, str]]) -> tuple[bytes, int]:
-        """Multi-speaker TTS. ``speakers`` are (name in the transcript, prebuilt voice).
-        Returns (16-bit mono PCM, sample rate)."""
+    def generate_speech(
+        self,
+        turns: Sequence[tuple[str, str]],
+        speakers: Sequence[tuple[str, str]],
+        style: str = "",
+    ) -> tuple[bytes, int]:
+        """Multi-speaker TTS. ``turns`` are (speaker name, verbatim line).
+
+        ``speakers`` are (name, prebuilt voice). Gemini 3.8 requires ``speechMetadata.speaker``
+        on every text part, and it reads ``text`` aloud, so the delivery direction goes in
+        ``style`` rather than into the line. Returns (16-bit mono PCM, sample rate).
+        """
+        parts = []
+        for speaker, text in turns:
+            line = " ".join(str(text).split())
+            if not line:
+                continue
+            meta: dict[str, str] = {"speaker": str(speaker)}
+            if style:
+                meta["style"] = style
+            parts.append({"text": line, "speechMetadata": meta})
+        if not parts:
+            raise GeminiError("Nothing to speak")
         return self._run(
-            lambda key: ([{"text": prompt}], None),
+            lambda key: (parts, None),
             needs_pdf=False,
             schema_capable=False,
-            invoke=lambda key, model, parts, _: self._call_speech(key, model, parts, speakers),
+            invoke=lambda key, model, sent, _: self._call_speech(key, model, sent, speakers),
         )
 
     def generate_from_pdf(
@@ -428,14 +448,13 @@ class GeminiClient:
     def _call_speech(
         self, api_key: str, model: str, parts: list[dict[str, Any]], speakers: Sequence[tuple[str, str]]
     ) -> tuple[bytes, int]:
-        voices = [
-            {"speaker": name, "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}
-            for name, voice in speakers
-        ]
+        voices = [{"speaker": name, "voiceConfig": {"voice": voice}} for name, voice in speakers]
         payload = {
             "contents": [{"role": "user", "parts": parts}],
             "generationConfig": {
                 "responseModalities": ["AUDIO"],
+                # Unary 3.8 replies are WAV unless we ask for raw PCM, which the MP3 encoder needs.
+                "responseFormat": [{"audio": {"mimeType": "AUDIO_L16"}}],
                 "speechConfig": {"multiSpeakerVoiceConfig": {"speakerVoiceConfigs": voices}},
             },
         }
@@ -445,6 +464,11 @@ class GeminiClient:
             finish = ((data.get("candidates") or [{}])[0]).get("finishReason")
             raise GeminiError(f"TTS returned no audio on {model} (finishReason={finish})")
         pcm, mime = audio
+        if pcm.startswith(b"RIFF") or "wav" in mime.lower():
+            decoded = _pcm_from_wav(pcm)
+            if decoded is None:
+                raise GeminiError(f"TTS returned a WAV file that could not be read ({mime})")
+            return decoded
         if "pcm" not in mime.lower() and "l16" not in mime.lower():
             raise GeminiError(f"TTS returned an unexpected audio format: {mime}")
         rate = re.search(r"rate=(\d+)", mime)
@@ -521,6 +545,36 @@ def _model_unavailable(message: str) -> bool:
 
 def _schema_rejected(message: str) -> bool:
     return bool(re.search(r"schema|constraint|too many states|response_mime_type|responseMimeType", message, re.I))
+
+
+def _pcm_from_wav(data: bytes) -> Optional[tuple[bytes, int]]:
+    """(16-bit mono PCM, sample rate) from a RIFF WAV, or None when it is not that."""
+    if len(data) < 44 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        return None
+    offset = 12
+    rate: Optional[int] = None
+    pcm = b""
+    while offset + 8 <= len(data):
+        kind = data[offset:offset + 4]
+        size = int.from_bytes(data[offset + 4:offset + 8], "little")
+        start = offset + 8
+        end = start + size
+        if end > len(data):
+            return None
+        body = data[start:end]
+        if kind == b"fmt " and len(body) >= 16:
+            audio_format = int.from_bytes(body[0:2], "little")
+            channels = int.from_bytes(body[2:4], "little")
+            rate = int.from_bytes(body[4:8], "little")
+            bits = int.from_bytes(body[14:16], "little")
+            if audio_format != 1 or channels != 1 or bits != 16:
+                return None
+        elif kind == b"data":
+            pcm += body
+        offset = end + (size % 2)
+    if not pcm or not rate:
+        return None
+    return pcm[: len(pcm) - (len(pcm) % 2)], rate
 
 
 def _extract_audio(payload: dict[str, Any]) -> Optional[tuple[bytes, str]]:

@@ -147,14 +147,20 @@ def _words(turns: list[dict[str, str]]) -> int:
     return sum(len(t["text"].split()) for t in turns)
 
 
-def tts_prompt(script: dict[str, Any], hosts: Sequence[dict[str, str]]) -> str:
-    """One prompt for one multi-speaker TTS call: delivery direction, then the transcript."""
-    a, b = hosts[0]["name"], hosts[1]["name"]
-    direction = (
-        f"Read this conversation from a calm, thoughtful science podcast. {a} and {b} are two friends "
-        "talking about a research paper late in the evening: warm, gentle, unhurried voices, a relaxed "
-        "pace, soft emphasis, and a natural pause between turns. Curious and sincere, never excited, "
-        "never salesy."
-    )
-    lines = "\n".join(f"{t['speaker']}: {t['text']}" for t in script["turns"])
-    return f"{direction}\n\n{lines}"
+# Gemini 3.8 TTS speaks ``text`` verbatim, so this direction is attached as
+# speech metadata on each turn and never written into the line itself.
+DELIVERY = (
+    "Calm, warm, and unhurried, like two friends talking about a research paper late in the evening. "
+    "Soft emphasis, a relaxed pace, curious and sincere."
+)
+
+
+def speech_turns(script: dict[str, Any]) -> list[tuple[str, str]]:
+    """(speaker, verbatim line) for each turn. The speaker is metadata, not part of the line."""
+    turns = []
+    for turn in script.get("turns") or []:
+        text = " ".join(str(turn.get("text") or "").split())
+        speaker = str(turn.get("speaker") or "").strip()
+        if speaker and text:
+            turns.append((speaker, text))
+    return turns

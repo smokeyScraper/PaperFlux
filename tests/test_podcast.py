@@ -17,7 +17,7 @@ from paperflux.src.agents.llm_errors import LLMError, QuotaExhaustedError
 from paperflux.src.agents.paper_podcast.agent import PodcastWriterAgent, build_user_text
 from paperflux.src.config.settings import rpm_for
 from paperflux.src.podcast import audio
-from paperflux.src.podcast.script import parse_script, script_schema, speakable, tts_prompt
+from paperflux.src.podcast.script import DELIVERY, parse_script, script_schema, speakable, speech_turns
 from paperflux.src.services import database
 from paperflux.src.services import paper_processor as pp
 from paperflux.src.services.podcast_producer import FAILED, GAVE_UP, READY, SCRIPTED, PodcastProducer
@@ -83,12 +83,12 @@ class ScriptTest(unittest.TestCase):
         self.assertTrue(all(a != b for a, b in zip(speakers, speakers[1:])))
         self.assertTrue(any("shortened" in p for p in problems))
 
-    def test_tts_prompt_directs_a_calm_delivery_and_names_both_hosts(self):
+    def test_speech_turns_name_each_host_and_leave_the_line_verbatim(self):
         script, _ = parse_script(script_json(), HOSTS, 700)
-        prompt = tts_prompt(script, HOSTS)
-        self.assertIn("calm", prompt)
-        self.assertIn("\nMaya: ", prompt)
-        self.assertIn("\nTheo: ", prompt)
+        turns = speech_turns(script)
+        self.assertIn("unhurried", DELIVERY)
+        self.assertEqual({speaker for speaker, _ in turns}, {"Maya", "Theo"})
+        self.assertTrue(all(not text.startswith(("Maya:", "Theo:")) for _, text in turns))
         self.assertEqual(script_schema(HOSTS)["properties"]["turns"]["items"]["properties"]["speaker"]["enum"], ["Maya", "Theo"])
 
 
@@ -154,14 +154,22 @@ class SpeechClientTest(unittest.TestCase):
             return audio_response(chunks=(b"\x01\x00" * 4, b"\x02\x00" * 4), mime="audio/L16;codec=pcm;rate=22050")
 
         client, _ = make_client(handler, models=("gemini-3.8-flash-tts",))
-        pcm, rate = client.generate_speech("Maya: hi\nTheo: hello", [("Maya", "Vindemiatrix"), ("Theo", "Algieba")])
+        turns = [("Maya", "hi"), ("Theo", "hello")]
+        pcm, rate = client.generate_speech(
+            turns, [("Maya", "Vindemiatrix"), ("Theo", "Algieba")], style="calm and warm"
+        )
         self.assertEqual((pcm, rate), (b"\x01\x00" * 4 + b"\x02\x00" * 4, 22050))
-        config = seen["body"]["generationConfig"]
+        body = seen["body"]
+        config = body["generationConfig"]
         self.assertEqual(config["responseModalities"], ["AUDIO"])
+        self.assertEqual(config["responseFormat"], [{"audio": {"mimeType": "AUDIO_L16"}}])
         voices = config["speechConfig"]["multiSpeakerVoiceConfig"]["speakerVoiceConfigs"]
-        self.assertEqual([(v["speaker"], v["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"]) for v in voices],
+        self.assertEqual([(v["speaker"], v["voiceConfig"]["voice"]) for v in voices],
                          [("Maya", "Vindemiatrix"), ("Theo", "Algieba")])
-        self.assertNotIn("systemInstruction", seen["body"])
+        sent = body["contents"][0]["parts"]
+        self.assertEqual([(p["speechMetadata"]["speaker"], p["text"]) for p in sent], turns)
+        self.assertTrue(all(p["speechMetadata"]["style"] == "calm and warm" for p in sent))
+        self.assertNotIn("systemInstruction", body)
         self.assertIn("gemini-3.8-flash-tts:generateContent", seen["url"])
 
     def test_unknown_tts_model_id_falls_through_to_the_next(self):
@@ -171,16 +179,27 @@ class SpeechClientTest(unittest.TestCase):
             return audio_response()
 
         client, _ = make_client(handler, models=("gemini-3.8-flash-tts", "gemini-3.8-flash-preview-tts"))
-        self.assertEqual(client.generate_speech("x", [("A", "v"), ("B", "w")])[1], 24000)
+        self.assertEqual(client.generate_speech([("A", "x"), ("B", "y")], [("A", "v"), ("B", "w")])[1], 24000)
 
     def test_no_audio_and_daily_quota_are_reported(self):
         client, _ = make_client(lambda r: httpx.Response(200, json={"candidates": [{"finishReason": "OTHER"}]}),
                                 models=("tts-a",))
         with self.assertRaises(GeminiError):
-            client.generate_speech("x", [("A", "v"), ("B", "w")])
+            client.generate_speech([("A", "x"), ("B", "y")], [("A", "v"), ("B", "w")])
         client, _ = make_client(lambda r: quota(daily=True), models=("tts-b",))
         with self.assertRaises(QuotaExhaustedError):
-            client.generate_speech("x", [("A", "v"), ("B", "w")])
+            client.generate_speech([("A", "x"), ("B", "y")], [("A", "v"), ("B", "w")])
+
+    def test_wav_reply_is_reduced_to_pcm(self):
+        pcm = b"\x01\x00" * 20
+        wav = audio.to_wav(pcm, 16000)
+
+        def handler(request):
+            return audio_response(chunks=(wav,), mime="audio/wav")
+
+        client, _ = make_client(handler, models=("gemini-3.8-flash-tts",))
+        got, rate = client.generate_speech([("A", "x"), ("B", "y")], [("A", "v"), ("B", "w")])
+        self.assertEqual((got, rate), (pcm, 16000))
 
     def test_tts_models_get_the_free_tier_rpm(self):
         self.assertEqual(rpm_for("gemini-3.8-flash-tts"), 3)
@@ -249,8 +268,8 @@ class FakeTTS:
     def __init__(self, errors=(), seconds=260):
         self.calls, self.errors, self.seconds = [], list(errors), seconds
 
-    def generate_speech(self, prompt, speakers):
-        self.calls.append((prompt, list(speakers)))
+    def generate_speech(self, turns, speakers, style=""):
+        self.calls.append((list(turns), list(speakers), style))
         if self.errors:
             raise self.errors.pop(0)
         return pcm_seconds(self.seconds, 8000), 8000
@@ -276,7 +295,8 @@ class ProducerTest(unittest.TestCase):
         self.assertAlmostEqual(pod["duration_s"], 260, delta=1)
         self.assertEqual([h["voice"] for h in pod["hosts"]], ["Vindemiatrix", "Algieba"])
         self.assertEqual(tts.calls[0][1], [("Maya", "Vindemiatrix"), ("Theo", "Algieba")])
-        self.assertIn("Maya: ", tts.calls[0][0])
+        self.assertEqual({speaker for speaker, _ in tts.calls[0][0]}, {"Maya", "Theo"})
+        self.assertIn("unhurried", tts.calls[0][2])
         self.assertEqual(progress[-1], (2, 2))
 
     def test_daily_budget_is_respected_and_no_scripts_are_wasted(self):

@@ -9,7 +9,7 @@ import sys
 from paperflux.src.agents.gemini_client import GeminiClient
 from paperflux.src.config.settings import GEMINI_TTS_MODELS, PODCAST_HOSTS, load_tts_keys
 from paperflux.src.podcast.audio import duration_seconds, encode
-from paperflux.src.podcast.script import tts_prompt
+from paperflux.src.podcast.script import DELIVERY, speech_turns
 
 
 def main(out_path: str) -> None:
@@ -22,8 +22,11 @@ def main(out_path: str) -> None:
         {"speaker": b, "text": f"And I'm {b}. If you can hear us both, calm and clear, the setup works."},
     ]}
     client = GeminiClient(api_keys=keys, models=GEMINI_TTS_MODELS, timeout_seconds=180, max_attempts=1)
-    pcm, rate = client.generate_speech(tts_prompt(script, PODCAST_HOSTS),
-                                       [(h["name"], h["voice"]) for h in PODCAST_HOSTS])
+    pcm, rate = client.generate_speech(
+        speech_turns(script),
+        [(h["name"], h["voice"]) for h in PODCAST_HOSTS],
+        style=DELIVERY,
+    )
     data, mime = encode(pcm, rate)
     with open(out_path, "wb") as f:
         f.write(data)

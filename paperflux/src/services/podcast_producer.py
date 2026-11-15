@@ -22,7 +22,7 @@ from paperflux.src.config.settings import (
     load_tts_keys,
 )
 from paperflux.src.podcast.audio import duration_seconds, encode
-from paperflux.src.podcast.script import WORDS_PER_MINUTE, tts_prompt
+from paperflux.src.podcast.script import DELIVERY, WORDS_PER_MINUTE, speech_turns
 
 logger = logging.getLogger("paperflux.podcast")
 
@@ -110,7 +110,7 @@ class PodcastProducer:
             return STOP
         speakers = [(h["name"], h["voice"]) for h in self.hosts]
         try:
-            pcm, rate = self.tts.generate_speech(tts_prompt(pod, self.hosts), speakers)
+            pcm, rate = self.tts.generate_speech(speech_turns(pod), speakers, style=DELIVERY)
         except QuotaExhaustedError:
             logger.warning("TTS quota is spent; the remaining episodes wait for the next run")
             return STOP

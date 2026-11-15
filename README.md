@@ -76,7 +76,7 @@ For the top papers, two calm hosts (Maya and Theo by default) talk the paper thr
 How it is produced, after all of the day's analyses are stored (so podcasts never delay them):
 
 1. **Script** (`agents/paper_podcast`): a text model writes JSON turns from the analyst writeup, its Visual Brief and the insights pack (no PDF, Flash-Lite first). `podcast/script.py` makes every line speakable (no markdown, LaTeX, URLs or stage directions), caps the length, and gives one repair pass. The script is stored before recording.
-2. **Audio**: one multi-speaker Gemini TTS request per episode, with a calm delivery direction and two prebuilt voices (`Vindemiatrix`, "Gentle"; `Algieba`, "Smooth").
+2. **Audio**: one multi-speaker Gemini TTS request per episode. Each spoken line is its own part, naming the speaker, with the calm delivery direction attached as style metadata so it is not read aloud. Voices are `Vindemiatrix` ("Gentle") and `Algieba` ("Smooth").
 3. **Storage**: PCM is encoded to 64 kbps MP3 (`lameenc`, ~0.5 MB per minute) and kept in a GridFS bucket, outside the paper documents; it is pruned with its paper.
 
 Free-tier TTS allows about 3 requests/min and 10/day, and failed requests count, so `services/podcast_producer.py`:

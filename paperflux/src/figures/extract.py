@@ -49,8 +49,8 @@ def extract_figures(pdf_path: str) -> list[PaperFigure] | None:
                 if current is None or figure.area > current.area:
                     found[figure.label] = figure
         return sorted(found.values(), key=lambda fig: (fig.number, fig.label, fig.page))
-    except Exception as exc:
-        logger.warning("Figure extraction failed for %s: %s", pdf_path, exc)
+    except Exception:
+        logger.warning("Figure extraction failed for %s", pdf_path, exc_info=True)
         return None
     finally:
         doc.close()

@@ -9,6 +9,7 @@ Built around the free-tier TTS budget (~10 requests per day):
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Sequence
 
@@ -21,6 +22,7 @@ from paperflux.src.config.settings import (
     PODCASTS_PER_DAY,
     load_tts_keys,
 )
+from paperflux.src.logsetup import bind_paper
 from paperflux.src.podcast.audio import duration_seconds, encode
 from paperflux.src.podcast.script import DELIVERY, WORDS_PER_MINUTE, speech_turns
 
@@ -90,6 +92,10 @@ class PodcastProducer:
 
     def produce(self, doc: dict[str, Any]) -> str:
         pid = doc["paper_id"]
+        with bind_paper(pid):
+            return self._produce(doc, pid)
+
+    def _produce(self, doc: dict[str, Any], pid: str) -> str:
         pod = dict(doc.get("podcast") or {})
         if self.db.tts_requests_today() >= self.per_day:  # don't write scripts nobody can record today
             logger.info("Today's podcast budget (%s TTS requests) is used up", self.per_day)
@@ -101,6 +107,7 @@ class PodcastProducer:
                 logger.warning("Podcast writer quota is spent; leaving the rest for the next run")
                 return STOP
             except Exception as exc:
+                logger.exception("Podcast script failed")
                 return self._fail(pid, pod, f"script: {exc}")
             pod.update(script, status=SCRIPTED, hosts=[dict(h) for h in self.hosts], updated_at=_now())
             self.db.set_podcast(pid, pod)
@@ -109,12 +116,14 @@ class PodcastProducer:
             logger.info("Today's podcast budget (%s TTS requests) is used up", self.per_day)
             return STOP
         speakers = [(h["name"], h["voice"]) for h in self.hosts]
+        started = time.perf_counter()
         try:
             pcm, rate = self.tts.generate_speech(speech_turns(pod), speakers, style=DELIVERY)
         except QuotaExhaustedError:
             logger.warning("TTS quota is spent; the remaining episodes wait for the next run")
             return STOP
         except Exception as exc:
+            logger.exception("Podcast recording failed")
             return self._fail(pid, pod, f"audio: {exc}")
 
         seconds = duration_seconds(pcm, rate)
@@ -125,7 +134,8 @@ class PodcastProducer:
         pod.update(status=READY, audio_id=self.db.save_podcast_audio(pid, audio, mime), mime=mime,
                    duration_s=round(seconds, 1), bytes=len(audio), error="", updated_at=_now())
         self.db.set_podcast(pid, pod)
-        logger.info("Podcast ready for %s (%.0fs, %s KB)", pid, seconds, len(audio) // 1024)
+        logger.info("Podcast ready (%.0fs audio, %s KB, recorded in %.1fs)",
+                    seconds, len(audio) // 1024, time.perf_counter() - started)
         return READY
 
     def _fail(self, pid: str, pod: dict[str, Any], error: str) -> str:

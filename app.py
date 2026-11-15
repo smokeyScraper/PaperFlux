@@ -1,4 +1,3 @@
-import logging
 import os
 import sys
 
@@ -6,11 +5,9 @@ import streamlit as st
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger("paperflux.app")
+from paperflux.src.logsetup import configure_logging  # noqa: E402
+
+configure_logging()
 
 # Must be the first Streamlit call.
 st.set_page_config(

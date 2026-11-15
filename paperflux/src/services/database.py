@@ -100,8 +100,8 @@ class DatabaseService:
         try:
             for stale in bucket.find({"metadata.paper_id": {"$nin": keep}}):
                 bucket.delete(stale._id)
-        except Exception as e:  # file cleanup must never block pruning papers
-            logger.warning("Could not prune stored files: %s", e)
+        except Exception:  # file cleanup must never block pruning papers
+            logger.warning("Could not prune stored files", exc_info=True)
 
     # ---- podcasts ------------------------------------------------------------
     @property

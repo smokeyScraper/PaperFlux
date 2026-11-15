@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from paperflux.src.agents.llm_errors import QuotaExhaustedError
@@ -9,6 +10,7 @@ from paperflux.src.agents.paper_analyst.agent import PaperAnalystAgent
 from paperflux.src.agents.paper_analyst.brief import split_visual_brief
 from paperflux.src.agents.paper_insights.agent import PaperInsightsAgent
 from paperflux.src.figures.extract import extract_figures
+from paperflux.src.logsetup import bind_paper
 from paperflux.src.config.settings import (
     MAX_PAPER_WORKERS,
     MAX_PAPERS,
@@ -133,6 +135,11 @@ class PaperProcessor:
         title = paper_entry["paper"].get("title", "")
         summary = paper_entry["paper"].get("summary", "")
 
+        with bind_paper(paper_id):
+            return self._analyze_and_store(paper_entry, pdf_path, paper_id, title, summary)
+
+    def _analyze_and_store(self, paper_entry, pdf_path, paper_id, title, summary):
+        started = time.perf_counter()
         try:
             existing = self.db.collection.find_one({"paper_id": paper_id})
             if paper_is_complete(existing):
@@ -144,17 +151,20 @@ class PaperProcessor:
             explanation = (existing or {}).get("explanation")
             visual_brief = (existing or {}).get("visual_brief") or ""
             if not explanation:
-                logger.info("Analyst agent starting for %s", paper_id)
+                logger.info("Analyst starting")
+                stage = time.perf_counter()
                 explanation = self.analyst.run(
                     pdf_path=pdf_path, title=title, summary=summary, paper_id=paper_id
                 )
+                logger.info("Analyst finished in %.1fs (%s chars)", time.perf_counter() - stage, len(explanation or ""))
             explanation, fresh_brief = split_visual_brief(explanation)
             visual_brief = fresh_brief or visual_brief
 
             insights = {"insights": []}
             quota_hit = False
             try:
-                logger.info("Insights agent starting for %s", paper_id)
+                logger.info("Insights starting")
+                stage = time.perf_counter()
                 insights = self.insights_agent.run(
                     pdf_path=pdf_path,
                     explanation=explanation,
@@ -163,30 +173,33 @@ class PaperProcessor:
                     abstract=summary,
                     visual_brief=visual_brief,
                 )
+                logger.info("Insights finished in %.1fs", time.perf_counter() - stage)
             except QuotaExhaustedError as e:
                 quota_hit = True
                 self._quota_event.set()
-                logger.warning("Insights quota exhausted for %s: %s", paper_id, e)
+                logger.warning("Insights quota exhausted after %.1fs: %s", time.perf_counter() - stage, e)
                 insights = {"insights": [], "raw": "", "parse_error": "Daily free-tier quota reached; will retry."}
             except Exception as e:
-                logger.error("Insights agent failed for %s: %s", paper_id, e)
+                logger.exception("Insights failed after %.1fs", time.perf_counter() - stage)
                 insights = {"insights": [], "raw": "", "parse_error": str(e)}
 
             paper_obj = self.fetcher.parse_paper_data(paper_entry)
             paper_obj.explanation = explanation
             paper_obj.visual_brief = visual_brief
             paper_obj.insights = insights
-            logger.info("Storing paper %s", paper_id)
+            logger.info("Storing paper")
             self.db.upsert_paper(paper_obj)
             self._store_figures(paper_id, pdf_path)
+            logger.info("Paper %s in %.1fs", "waiting on quota" if quota_hit else "stored",
+                        time.perf_counter() - started)
             return QUOTA if quota_hit else DONE
 
         except QuotaExhaustedError as e:
             self._quota_event.set()
-            logger.warning("Analyst quota exhausted at %s: %s", paper_id, e)
+            logger.warning("Analyst quota exhausted after %.1fs: %s", time.perf_counter() - started, e)
             return QUOTA
-        except Exception as e:
-            logger.error("Error processing paper %s: %s", paper_id, e)
+        except Exception:
+            logger.exception("Paper failed after %.1fs", time.perf_counter() - started)
             return FAILED
 
         finally:
@@ -205,7 +218,8 @@ class PaperProcessor:
         self._running = True
         self._quota_event.clear()
         self.db.set_processing_status(True)
-        logger.info("Starting paper processing...")
+        logger.info("Starting paper processing")
+        started = time.perf_counter()
         completed = False
 
         try:
@@ -240,7 +254,8 @@ class PaperProcessor:
 
             done = sum(1 for r in results.values() if r == DONE)
             quota = sum(1 for r in results.values() if r == QUOTA)
-            logger.info("Processed: %s done, %s waiting on quota, %s failed", done, quota,
+            logger.info("Papers finished in %.0fs: %s done, %s waiting on quota, %s failed",
+                        time.perf_counter() - started, done, quota,
                         sum(1 for r in results.values() if r == FAILED))
             await asyncio.to_thread(self._run_podcasts, today_ids)
 
@@ -257,8 +272,8 @@ class PaperProcessor:
             completed = True
             return True
 
-        except Exception as e:
-            logger.error("Error in paper processing: %s", e)
+        except Exception:
+            logger.exception("Paper processing failed after %.0fs", time.perf_counter() - started)
             return False
 
         finally:
@@ -283,8 +298,8 @@ class PaperProcessor:
                 return
             self.db.save_paper_figures(paper_id, found)
             logger.info("Stored %s figure(s) for %s", len(found), paper_id)
-        except Exception as exc:
-            logger.warning("Could not store figures for %s: %s", paper_id, exc)
+        except Exception:
+            logger.exception("Could not store figures")
 
     async def _backfill_figures(self, papers):
         """Papers already analyzed before figure lifting existed still get their figures.
@@ -297,7 +312,8 @@ class PaperProcessor:
         paths = await self.fetcher.download_papers(pending)
         for pid, path in paths.items():
             try:
-                self._store_figures(pid, path)
+                with bind_paper(pid):
+                    self._store_figures(pid, path)
             finally:
                 if path and os.path.exists(path):
                     try:

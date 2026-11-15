@@ -322,13 +322,17 @@ class GeminiClient:
                 kid = _key_id(key)
                 if self._is_exhausted(kid, model):
                     quota_hits += 1
+                    logger.debug("Skipping %s (key %s): quota already spent today", model, kid)
                     continue
                 attempt = 0
                 while attempt < self.max_attempts:
                     self._limiter(kid, model).acquire()
                     parts, cleanup = parts_factory(key)
+                    started = time.perf_counter()
                     try:
-                        return invoke(key, model, parts, use_schema)
+                        result = invoke(key, model, parts, use_schema)
+                        logger.info("Gemini %s responded in %.1fs", model, time.perf_counter() - started)
+                        return result
                     except GeminiError as exc:
                         status = exc.status_code
                         if status == 429:

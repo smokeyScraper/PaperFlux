@@ -57,6 +57,7 @@ class PaperFetcher:
         Download a single paper's PDF.
         Returns the path to the downloaded PDF or None if download failed.
         """
+        paper_id = "?"
         try:
             paper_id = paper_entry["paper"]["id"]
             pdf_url = PDF_BASE_URL.format(id=paper_id)
@@ -65,21 +66,21 @@ class PaperFetcher:
             filename = f"{datetime.now().date()}_{clean_id}.pdf"
             filepath = os.path.join(TEMP_DIR, filename)
 
-            logger.info(f"Downloading paper {paper_id} from {pdf_url}")
-            
+            logger.info("Downloading %s", paper_id)
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(pdf_url) as response:
                     if response.status == 200:
                         content = await response.read()
                         with open(filepath, "wb") as f:
                             f.write(content)
-                        logger.info(f"Successfully downloaded: {paper_id}")
+                        logger.info("Downloaded %s (%s KB)", paper_id, max(1, len(content) // 1024))
                         return filepath
-                    logger.error(f"Failed to download {paper_id}: HTTP {response.status}")
+                    logger.error("Download of %s failed: HTTP %s", paper_id, response.status)
                     return None
 
-        except Exception as e:
-            logger.error(f"Error downloading {paper_id}: {str(e)}")
+        except Exception:
+            logger.exception("Download of %s failed", paper_id)
             return None
 
     async def download_papers(self, papers: List[dict]) -> Dict[str, str]:

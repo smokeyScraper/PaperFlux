@@ -63,9 +63,9 @@ class PaperScheduler:
                 # Sleep for 60 minutes before checking again
                 time.sleep(3600)
                 
-            except Exception as e:
-                logger.error(f"Error in scheduler loop: {str(e)}")
-                time.sleep(300)  # Sleep for 5 minute on error before retrying
+            except Exception:
+                logger.exception("Scheduler loop failed; retrying in 5 minutes")
+                time.sleep(300)
     
     def _should_process_now(self, current_time):
         """Determine if we should process papers at this time"""

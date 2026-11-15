@@ -162,7 +162,7 @@ class SpeechClientTest(unittest.TestCase):
         body = seen["body"]
         config = body["generationConfig"]
         self.assertEqual(config["responseModalities"], ["AUDIO"])
-        self.assertEqual(config["responseFormat"], [{"audio": {"mimeType": "AUDIO_L16"}}])
+        self.assertNotIn("responseFormat", config)
         voices = config["speechConfig"]["multiSpeakerVoiceConfig"]["speakerVoiceConfigs"]
         self.assertEqual([(v["speaker"], v["voiceConfig"]["voice"]) for v in voices],
                          [("Maya", "Vindemiatrix"), ("Theo", "Algieba")])

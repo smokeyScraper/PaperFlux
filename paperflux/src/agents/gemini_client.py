@@ -453,8 +453,8 @@ class GeminiClient:
             "contents": [{"role": "user", "parts": parts}],
             "generationConfig": {
                 "responseModalities": ["AUDIO"],
-                # Unary 3.8 replies are WAV unless we ask for raw PCM, which the MP3 encoder needs.
-                "responseFormat": [{"audio": {"mimeType": "AUDIO_L16"}}],
+                # 3.8 unary replies are WAV. Asking for another encoding here is rejected, so the
+                # WAV is turned into PCM below, which is what the MP3 encoder needs.
                 "speechConfig": {"multiSpeakerVoiceConfig": {"speakerVoiceConfigs": voices}},
             },
         }

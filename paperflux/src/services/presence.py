@@ -1,15 +1,18 @@
 """How many people are reading PaperFlux right now.
 
-One Redis sorted set for the whole service, not per paper. Each browser session
-heartbeats its id with the current timestamp; ids older than the window are
-dropped. The Space does not run Redis. Set REDIS_URL to an external database
-(Upstash or Redis Cloud). With no URL, or when Redis is down, the count is
-omitted and the page still loads.
+One counter for the whole service, not per paper. Each browser session
+heartbeats its id; ids older than the window drop off.
+
+A single Space is one process, so the count lives in memory. The home screen
+shows it; an open paper hides it, and that visit still counts. Set REDIS_URL
+when more than one process should share the same number.
+If that Redis is down, the badge hides and the page still loads.
 """
 from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from typing import Optional
 
@@ -21,6 +24,8 @@ _RETRY_AFTER = 60.0
 
 _client = None
 _down_until = 0.0
+_local: dict[str, float] = {}
+_local_lock = threading.Lock()
 
 
 def readers_label(count: int) -> str:
@@ -30,14 +35,23 @@ def readers_label(count: int) -> str:
 def beat(session_id: str, client=None, now: Optional[float] = None) -> Optional[int]:
     """Record this session and return how many sessions are inside the window.
 
-    ``None`` means presence is not configured or Redis could not be reached.
+    ``None`` means Redis is configured but could not be reached. With no
+    ``REDIS_URL``, the count is kept in this process.
     """
     if not session_id:
         return None
-    redis = client if client is not None else _redis()
-    if redis is None:
-        return None
     stamp = time.time() if now is None else now
+    if client is not None:
+        return _beat_redis(client, session_id, stamp)
+    if os.getenv("REDIS_URL", "").strip():
+        redis = _redis()
+        if redis is None:
+            return None
+        return _beat_redis(redis, session_id, stamp)
+    return _beat_local(session_id, stamp)
+
+
+def _beat_redis(redis, session_id: str, stamp: float) -> Optional[int]:
     try:
         pipe = redis.pipeline()
         pipe.zadd(KEY, {session_id: stamp})
@@ -49,6 +63,15 @@ def beat(session_id: str, client=None, now: Optional[float] = None) -> Optional[
         logger.warning("Presence update failed; the reader count is hidden until Redis answers")
         _trip()
         return None
+
+
+def _beat_local(session_id: str, stamp: float) -> int:
+    cutoff = stamp - WINDOW_SECONDS
+    with _local_lock:
+        _local[session_id] = stamp
+        for member in [m for m, score in _local.items() if score <= cutoff]:
+            del _local[member]
+        return len(_local)
 
 
 def _redis():

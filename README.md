@@ -30,7 +30,8 @@ PaperFlux fetches the most-upvoted Hugging Face Daily Papers and turns each one 
 - **Deep links**: the URL is the source of truth (`?paper=<id>&view=insights`), so every paper and tab is shareable and survives a refresh; a Share button gives the link
 - **One view at a time**: Overview, Insights, Analysis, Abstract. Only the selected view is rendered, so pages stay fast
 - **Keyboard**: `J` next paper, `K` previous paper
-- **Live status**: the sidebar shows real progress while papers are processed and updates by itself; new papers appear without a refresh. "Next update" accounts for weekends and your timezone. With `REDIS_URL` set, it also shows how many people are reading the service right now
+- **Live readers**: the home screen shows how many people are reading the service right now. Opening a paper hides the number, and that visit still counts. One Space keeps the count itself. Set `REDIS_URL` when more than one process should share it
+- **Live status**: the sidebar shows real progress while papers are processed and updates by itself; new papers appear without a refresh. "Next update" accounts for weekends and your timezone
 - **Never an empty screen**: papers whose diagrams are still pending (free-tier quota) show their TL;DR and analysis immediately, and the diagrams appear on their own later
 - **Long reads made scannable**: the analysis is split into collapsible sections with a reading time, and downloadable as Markdown
 

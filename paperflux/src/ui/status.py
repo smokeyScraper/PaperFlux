@@ -16,6 +16,7 @@ logger = logging.getLogger("paperflux.ui.status")
 
 POLL_WHILE_PROCESSING = 6
 POLL_WHILE_IDLE = 60
+LIVE_POLL_SECONDS = 30
 
 
 def user_timezone() -> Optional[str]:
@@ -82,10 +83,25 @@ def _reader_id() -> str:
     return sid
 
 
+def render_live_readers() -> None:
+    """Home-screen badge. Its own poll, so the number moves without a full page rerun.
+
+    Opening a paper hides this. The sidebar poll still heartbeats, so a reader
+    on any page stays in the count.
+    """
+
+    @st.fragment(run_every=LIVE_POLL_SECONDS)
+    def _badge() -> None:
+        count = beat(_reader_id())
+        if count is None:
+            return
+        st.markdown(f":green-badge[:material/person: {readers_label(count)}]")
+
+    _badge()
+
+
 def _draw(db: Any, processor: Any, meta: Any, pending_count: int) -> None:
-    count = beat(_reader_id())
-    if count is not None:
-        st.caption(readers_label(count))
+    beat(_reader_id())  # every page, including an open paper; the badge is home-only
     now = datetime.now(timezone.utc)
     tz = user_timezone()
     if meta.is_processing:

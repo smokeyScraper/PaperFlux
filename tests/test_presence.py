@@ -1,6 +1,9 @@
-"""Live reader count: one Redis sorted set for the whole service."""
+"""Live reader count: one counter for the whole service."""
+import os
 import unittest
+from unittest.mock import patch
 
+from paperflux.src.services import presence
 from paperflux.src.services.presence import KEY, WINDOW_SECONDS, beat, readers_label
 
 
@@ -44,6 +47,10 @@ class FakeRedis:
 
 
 class PresenceTest(unittest.TestCase):
+    def setUp(self):
+        presence._local.clear()
+        presence._down_until = 0.0
+
     def test_label(self):
         self.assertEqual(readers_label(1), "1 reading now")
         self.assertEqual(readers_label(4), "4 reading now")
@@ -62,6 +69,20 @@ class PresenceTest(unittest.TestCase):
 
     def test_missing_session_is_not_counted(self):
         self.assertIsNone(beat("", client=FakeRedis(), now=1))
+
+    def test_one_process_counts_readers_when_redis_is_unset(self):
+        with patch.dict(os.environ, {"REDIS_URL": ""}):
+            self.assertEqual(beat("a", now=1_000), 1)
+            self.assertEqual(beat("b", now=1_030), 2)
+            self.assertEqual(beat("a", now=1_030), 2)
+            later = 1_030 + WINDOW_SECONDS + 1
+            self.assertEqual(beat("c", now=later), 1)
+
+    def test_a_configured_redis_that_is_down_hides_the_count(self):
+        presence._down_until = 10**12
+        with patch.dict(os.environ, {"REDIS_URL": "redis://127.0.0.1:1/0"}):
+            self.assertIsNone(beat("a", now=1))
+        self.assertEqual(presence._local, {})
 
 
 if __name__ == "__main__":

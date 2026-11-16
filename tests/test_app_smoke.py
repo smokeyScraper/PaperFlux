@@ -97,6 +97,7 @@ class AppSmokeTest(unittest.TestCase):
         self.assertIn("Animated explainer", md)
         self.assertIn("Diagrams coming soon", md)
         self.assertIn("Problem: X is slow.", md)  # pending paper falls back to the analysis TL;DR
+        self.assertIn("reading now", md)  # live count on the home screen only
 
     def test_clicking_a_card_opens_the_paper_and_updates_the_url(self):
         at = boot([v3_paper()])
@@ -104,6 +105,7 @@ class AppSmokeTest(unittest.TestCase):
         self.assert_healthy(at)
         self.assertEqual(at.query_params["paper"], "2611.00001")
         self.assertTrue(any("A New Paper" in m for m in texts(at.markdown)))
+        self.assertNotIn("reading now", " ".join(texts(at.markdown)))  # badge is home-only
         self.assertTrue(any("Paper 1 of 1" in c for c in texts(at.caption)))
 
     def test_deep_link_renders_overview_with_pack(self):

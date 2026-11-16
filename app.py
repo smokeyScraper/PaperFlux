@@ -24,7 +24,7 @@ from paperflux.src.ui.content import PENDING, paper_status, sort_papers  # noqa:
 from paperflux.src.ui.detail import render_detail  # noqa: E402
 from paperflux.src.ui.feed import render_empty, render_feed  # noqa: E402
 from paperflux.src.ui.nav import goto  # noqa: E402
-from paperflux.src.ui.status import next_update_text, render_status  # noqa: E402
+from paperflux.src.ui.status import next_update_text, render_live_readers, render_status  # noqa: E402
 from paperflux.src.ui.theme import apply_theme_switch, theme_toggle  # noqa: E402
 
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -77,6 +77,8 @@ processor = scheduler.paper_processor
 papers = sort_papers(db.get_all_papers())
 meta = db.get_processing_metadata()
 pending_count = sum(1 for p in papers if paper_status(p) == PENDING)
+selected_id = st.query_params.get("paper")
+paper = next((p for p in papers if p["paper_id"] == selected_id), None) if selected_id else None
 
 if st.session_state.pop("just_finished", False):
     st.toast("Fresh papers are ready", icon="✨")
@@ -93,11 +95,10 @@ with st.container(horizontal=True, horizontal_alignment="distribute", vertical_a
     with st.container(width="content", gap=None):
         st.title("📚 PaperFlux")
         st.caption("Today's most-upvoted AI papers, explained with animated diagrams.")
+        if paper is None:
+            render_live_readers()
     theme_toggle()
 apply_theme_switch()
-
-selected_id = st.query_params.get("paper")
-paper = next((p for p in papers if p["paper_id"] == selected_id), None) if selected_id else None
 
 if selected_id and paper is None:
     st.warning("That paper is no longer available. PaperFlux keeps the latest papers only.")

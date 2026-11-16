@@ -90,6 +90,7 @@ class AppSmokeTest(unittest.TestCase):
         self.assert_healthy(at)
         opens = [b for b in at.button if b.label == "Open →"]
         self.assertEqual([b.key for b in opens], ["open-2611.00001", "open-2611.00002", "open-2610.00009"])  # 42, 10, 1
+        self.assertTrue(all(b.proto.type == "primary" for b in opens))
         md = " ".join(texts(at.markdown))
         self.assertIn("1. A New Paper", md)
         self.assertIn("They did X.", md)  # TL;DR as the blurb

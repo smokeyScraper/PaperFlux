@@ -48,7 +48,7 @@ def _card(rank: int, paper: dict[str, Any]) -> None:
         st.button(
             "Open →",
             key=f"open-{pid}",
-            type="primary" if rank == 1 else "secondary",
+            type="primary",
             on_click=goto,
             args=(pid,),
         )

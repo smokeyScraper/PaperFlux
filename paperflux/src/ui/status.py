@@ -2,11 +2,13 @@
 import asyncio
 import logging
 import threading
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 import streamlit as st
 
+from paperflux.src.services.presence import beat, readers_label
 from paperflux.src.services.schedule_rules import next_scheduled_run
 from paperflux.src.ui.timeutil import format_local, relative
 
@@ -72,7 +74,18 @@ def render_status(db: Any, processor: Any, meta: Any, pending_count: int) -> Non
     panel()
 
 
+def _reader_id() -> str:
+    sid = st.session_state.get("_reader_id")
+    if not sid:
+        sid = uuid.uuid4().hex
+        st.session_state["_reader_id"] = sid
+    return sid
+
+
 def _draw(db: Any, processor: Any, meta: Any, pending_count: int) -> None:
+    count = beat(_reader_id())
+    if count is not None:
+        st.caption(readers_label(count))
     now = datetime.now(timezone.utc)
     tz = user_timezone()
     if meta.is_processing:
